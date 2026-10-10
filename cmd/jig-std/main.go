@@ -54,9 +54,14 @@ func main() {
 }
 
 func names() []string {
-	out := make([]string, 0, len(plugins))
+	var out []string
 	for n := range plugins {
 		out = append(out, n)
+	}
+	for n := range importers {
+		if plugins[n] == nil {
+			out = append(out, n)
+		}
 	}
 	slices.Sort(out)
 	return out
@@ -69,6 +74,10 @@ func describe(name string) string {
 			ds = append(ds, string(a.Kind)+": "+a.Description)
 		}
 	}
+	for n := range importers[name] {
+		ds = append(ds, "imports "+n)
+	}
+	slices.Sort(ds)
 	return strings.Join(ds, "; ")
 }
 
@@ -96,6 +105,12 @@ func install(dir string) error {
 			// ponytail: official plugins run tools (kubectl, docker, go) with the user's own access; narrow per plugin later
 			Permissions: host.Permissions{Env: []string{"*"}, FS: []string{"/"}},
 		}
+		for in, im := range importers[n] {
+			if m.Importers == nil {
+				m.Importers = map[string]host.ImporterDecl{}
+			}
+			m.Importers[in] = host.ImporterDecl{Files: im.files}
+		}
 		b, err := yaml.Marshal(m)
 		if err != nil {
 			return err
@@ -107,7 +122,7 @@ func install(dir string) error {
 			return err
 		}
 	}
-	fmt.Printf("installed %d plugins in %s\n", len(plugins), dir)
+	fmt.Printf("installed %d plugins in %s\n", len(names()), dir)
 	return nil
 }
 
@@ -140,7 +155,7 @@ func lookup() contracts.Lookup {
 
 func serve(name string) error {
 	kinds, ok := plugins[name]
-	if !ok {
+	if _, imports := importers[name]; !ok && !imports {
 		return fmt.Errorf("no plugin %q (have %s)", name, strings.Join(names(), ", "))
 	}
 	p := sdk.New(name).Version(version).Implements(implements(name)...)
@@ -151,6 +166,7 @@ func serve(name string) error {
 		}
 		register(p, s)
 	}
+	registerImporters(p, name)
 	p.Serve()
 	return nil
 }

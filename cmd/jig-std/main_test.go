@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/goxang/jig-plugins/adapters/runtime/kind"
@@ -45,5 +47,24 @@ func TestEveryPluginServesItsContracts(t *testing.T) {
 				t.Errorf("%s as %s: %v", n, ct.ID, ps)
 			}
 		}
+	}
+}
+
+func TestImportersReturnFragments(t *testing.T) {
+	dir := t.TempDir()
+	compose := filepath.Join(dir, "compose.yaml")
+	rig := filepath.Join(dir, "rig.yaml")
+	os.WriteFile(compose, []byte("services:\n  web: { build: ., ports: [\"8000:8000\"] }\n"), 0o644)
+	os.WriteFile(rig, []byte("version: 1\nproject: x\nservices:\n  api: { ports: { http: 80 } }\n"), 0o644)
+	frag, err := importers["compose"]["compose"].run(compose, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, _ := frag["services"].(map[string]any)["web"].(map[string]any)
+	if web["ports"].(map[string]any)["http"] != 8000 {
+		t.Fatalf("compose fragment %v", frag)
+	}
+	if frag, err = importers["rig"]["rig"].run(rig, dir); err != nil || frag["version"] != nil || frag["project"] != "x" {
+		t.Fatalf("rig fragment %v %v", frag, err)
 	}
 }
