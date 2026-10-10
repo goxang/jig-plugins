@@ -3,9 +3,17 @@ package main
 import (
 	"testing"
 
+	"github.com/goxang/jig-plugins/adapters/runtime/kind"
+	"github.com/goxang/jig-plugins/adapters/runtime/kubernetes"
 	"github.com/goxang/jig/contracts"
+	"github.com/goxang/jig/core"
 	"github.com/goxang/jig/plugin"
 	"github.com/goxang/jig/protocol"
+)
+
+var (
+	_ core.Manifester = (*kubernetes.Runtime)(nil)
+	_ core.Manifester = (*kind.Runtime)(nil)
 )
 
 func TestEveryPluginServesItsContracts(t *testing.T) {
