@@ -1,0 +1,32 @@
+// Package all registers every adapter bundled with jig; a custom binary imports it plus its own.
+package all
+
+import (
+	_ "github.com/goxang/jig-plugins/adapters/builder/command"
+	_ "github.com/goxang/jig-plugins/adapters/builder/docker"
+	_ "github.com/goxang/jig-plugins/adapters/builder/golang"
+	_ "github.com/goxang/jig-plugins/adapters/cache/redis"
+	_ "github.com/goxang/jig-plugins/adapters/database/sql"
+	_ "github.com/goxang/jig-plugins/adapters/debugger/delve"
+	_ "github.com/goxang/jig-plugins/adapters/hosts/ssh"
+	_ "github.com/goxang/jig-plugins/adapters/kv/consul"
+	_ "github.com/goxang/jig-plugins/adapters/loadgen/command"
+	_ "github.com/goxang/jig-plugins/adapters/loadgen/http"
+	_ "github.com/goxang/jig-plugins/adapters/loadgen/kv"
+	_ "github.com/goxang/jig-plugins/adapters/logs/loki"
+	_ "github.com/goxang/jig-plugins/adapters/logs/runtime"
+	_ "github.com/goxang/jig-plugins/adapters/messaging/kafka"
+	_ "github.com/goxang/jig-plugins/adapters/messaging/rabbitmq"
+	_ "github.com/goxang/jig-plugins/adapters/metrics/prometheus"
+	_ "github.com/goxang/jig-plugins/adapters/metrics/scrape"
+	_ "github.com/goxang/jig-plugins/adapters/profiler/command"
+	_ "github.com/goxang/jig-plugins/adapters/profiler/pprof"
+	_ "github.com/goxang/jig-plugins/adapters/query/http"
+	_ "github.com/goxang/jig-plugins/adapters/runtime/docker"
+	_ "github.com/goxang/jig-plugins/adapters/runtime/kind"
+	_ "github.com/goxang/jig-plugins/adapters/runtime/kubernetes"
+	_ "github.com/goxang/jig-plugins/adapters/runtime/local"
+	_ "github.com/goxang/jig-plugins/adapters/tracing/jaeger"
+	_ "github.com/goxang/jig-plugins/adapters/tracing/tempo"
+	_ "github.com/goxang/jig-plugins/adapters/tracing/zipkin"
+)

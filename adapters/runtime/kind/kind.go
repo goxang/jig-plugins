@@ -1,0 +1,288 @@
+// Package kind is the Kubernetes runtime on a local kind cluster, plus what only kind can do:
+// create and delete the cluster with a local registry, load images, and shell into nodes with docker.
+package kind
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
+	"strings"
+
+	"github.com/goxang/jig-plugins/adapters/runtime/kubernetes"
+	"github.com/goxang/jig-plugins/internal/sh"
+	"github.com/goxang/jig/core"
+	"github.com/goxang/jig/plugin"
+	"github.com/goxang/jig/spec"
+)
+
+func init() {
+	plugin.Register(core.KindRuntime, "kind", "local kind cluster: the kubernetes runtime plus cluster create/delete, local registry and image loading", New)
+}
+
+type Options struct {
+	kubernetes.Options `yaml:",inline"`
+	Cluster            string `yaml:"cluster"`
+	NodeImage          string `yaml:"node_image"`
+	Workers            int    `yaml:"workers"`
+	// RegistryPort runs a registry container on localhost:<port> that the cluster pulls from.
+	RegistryPort int `yaml:"registry_port"`
+	// Preload copies these local docker images into the nodes on create, for clusters that cannot pull.
+	Preload []string `yaml:"preload"`
+}
+
+type Runtime struct {
+	*kubernetes.Runtime
+	opt Options
+}
+
+func New(env core.Env, c *spec.Component) (any, error) {
+	var o Options
+	if err := c.Decode(&o); err != nil {
+		return nil, err
+	}
+	if o.Cluster == "" {
+		o.Cluster = "jig"
+	}
+	if o.Context == "" {
+		o.Context = "kind-" + o.Cluster
+	}
+	if o.RegistryPort > 0 && o.Registry == "" {
+		o.Registry = fmt.Sprintf("localhost:%d", o.RegistryPort)
+	}
+	k := &kubernetes.Runtime{Opt: o.Options, HostIP: hostIP}
+	k.SetEnv(env)
+	if err := k.Init(); err != nil {
+		return nil, err
+	}
+	return &Runtime{Runtime: k, opt: o}, nil
+}
+
+func (r *Runtime) registryName() string { return r.opt.Cluster + "-registry" }
+
+// LoadImage copies a local docker image into the cluster's nodes.
+func (r *Runtime) LoadImage(ctx context.Context, image string) error {
+	return sh.New("kind", "load", "docker-image", image, "--name", r.opt.Cluster).Run(ctx)
+}
+
+// Hosts are the cluster's nodes. Kind nodes are local containers, so docker fills in what the API
+// server cannot give: the whole list when kubectl cannot reach the cluster (stopped, or its context
+// missing from the kubeconfig), and the load, plus CPU and memory when the kubelet summary is missing.
+func (r *Runtime) Hosts(ctx context.Context) ([]core.Host, error) {
+	hosts, kerr := r.Runtime.Hosts(ctx)
+	out, err := sh.New("docker", "ps", "-a", "--filter", "label=io.x-k8s.kind.cluster="+r.opt.Cluster,
+		"--format", `{{.Names}}	{{.State}}	{{.Label "io.x-k8s.kind.role"}}`).Output(ctx)
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		return hosts, kerr
+	}
+	known := map[string]int{}
+	for i, h := range hosts {
+		known[h.Name] = i
+	}
+	var running []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Split(l, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		if _, ok := known[f[0]]; !ok {
+			known[f[0]] = len(hosts)
+			hosts = append(hosts, core.Host{Name: f[0], Roles: []string{f[2]}, OS: "kind node (" + f[1] + ")"})
+		}
+		if f[1] == "running" {
+			running = append(running, f[0])
+		}
+	}
+	if len(running) == 0 {
+		return hosts, nil
+	}
+	if out, err := sh.New("docker", append([]string{"stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"}, running...)...).Output(ctx); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			f := strings.Split(l, "\t")
+			i, ok := known[f[0]]
+			if len(f) < 3 || !ok {
+				continue
+			}
+			h := &hosts[i]
+			h.Ready = h.Ready || kerr != nil
+			cpu, _ := strconv.ParseFloat(strings.TrimSuffix(f[1], "%"), 64)
+			used, total, _ := strings.Cut(f[2], " / ")
+			if h.CPUUsed == 0 && h.MemUsed == 0 {
+				h.MemUsed = dockerBytes(used)
+				if h.CPUs == 0 {
+					h.CPUs = runtime.NumCPU()
+				}
+				h.CPUUsed = cpu / 100 / float64(h.CPUs)
+			}
+			if h.MemTotal == 0 {
+				h.MemTotal = dockerBytes(total)
+			}
+		}
+	}
+	for _, n := range running {
+		if raw, err := sh.New("docker", "exec", n, "cat", "/proc/loadavg").Output(ctx); err == nil {
+			if f := strings.Fields(string(raw)); len(f) > 0 {
+				hosts[known[n]].Load1, _ = strconv.ParseFloat(f[0], 64)
+			}
+		}
+	}
+	return hosts, nil
+}
+
+// dockerBytes reads docker stats' sizes: 1.5GiB, 512MiB, 900kB.
+func dockerBytes(s string) int64 {
+	s = strings.TrimSpace(s)
+	units := []struct {
+		suffix string
+		mult   float64
+	}{{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}, {"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}, {"kB", 1e3}, {"B", 1}}
+	for _, u := range units {
+		if v, ok := strings.CutSuffix(s, u.suffix); ok {
+			f, _ := strconv.ParseFloat(v, 64)
+			return int64(f * u.mult)
+		}
+	}
+	return 0
+}
+
+func (r *Runtime) Shell(ctx context.Context, host string, command []string) (*exec.Cmd, error) {
+	if len(command) == 0 {
+		command = []string{"bash", "-l"}
+	}
+	return exec.CommandContext(ctx, "docker", append([]string{"exec", "-it", host}, command...)...), nil
+}
+
+func (r *Runtime) Actions() []core.Action {
+	own := []core.Action{
+		{Name: "create", Mutate: true, Help: "create the kind cluster (and its registry) if missing", Run: r.create},
+		{Name: "delete-cluster", Mutate: true, Help: "delete the kind cluster (needs --yes)", Run: func(ctx context.Context, args []string, out io.Writer) error {
+			if !core.Confirmed(ctx) {
+				return fmt.Errorf("this deletes cluster %s and everything in it; repeat with --yes", r.opt.Cluster)
+			}
+			return sh.New("kind", "delete", "cluster", "--name", r.opt.Cluster).Attach(ctx, nil, out, out)
+		}},
+		{Name: "load", Mutate: true, Help: "load local docker images into the nodes: load <image>...", Run: func(ctx context.Context, args []string, out io.Writer) error {
+			for _, img := range args {
+				if err := r.LoadImage(ctx, img); err != nil {
+					return err
+				}
+				fmt.Fprintln(out, "loaded", img)
+			}
+			return nil
+		}},
+	}
+	return append(own, r.Runtime.Actions()...)
+}
+
+func (r *Runtime) exists(ctx context.Context) bool {
+	out, _ := sh.New("kind", "get", "clusters").Output(ctx)
+	for _, c := range strings.Fields(string(out)) {
+		if c == r.opt.Cluster {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runtime) create(ctx context.Context, _ []string, out io.Writer) error {
+	reg := r.registryName()
+	if r.opt.RegistryPort > 0 {
+		if err := sh.New("docker", "inspect", reg).Run(ctx); err != nil {
+			fmt.Fprintf(out, "starting registry %s on localhost:%d\n", reg, r.opt.RegistryPort)
+			if err := sh.New("docker", "run", "-d", "--restart=always", "-p", fmt.Sprintf("127.0.0.1:%d:5000", r.opt.RegistryPort), "--name", reg, "registry:2").Run(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if !r.exists(ctx) {
+		cfg := "kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n  - role: control-plane\n"
+		for i := 0; i < r.opt.Workers; i++ {
+			cfg += "  - role: worker\n"
+		}
+		if r.opt.RegistryPort > 0 {
+			// registry.mirrors is gone in containerd 2; hosts.toml under config_path works on 1.7 and 2.x
+			cfg += "containerdConfigPatches:\n  - |-\n    [plugins.\"io.containerd.grpc.v1.cri\".registry]\n      config_path = \"/etc/containerd/certs.d\"\n"
+		}
+		previous, _ := sh.New("kubectl", "config", "current-context").Output(ctx)
+		args := []string{"create", "cluster", "--name", r.opt.Cluster, "--config", "-"}
+		if r.opt.NodeImage != "" {
+			args = append(args, "--image", r.opt.NodeImage)
+		}
+		cmd := sh.New("kind", args...)
+		cmd.Stdin = strings.NewReader(cfg)
+		// kind copies the host's proxy into the nodes, where a loopback proxy is unreachable
+		cmd.Env = noProxyEnv()
+		fmt.Fprintf(out, "creating kind cluster %s\n", r.opt.Cluster)
+		if err := cmd.Attach(ctx, strings.NewReader(cfg), out, out); err != nil {
+			return err
+		}
+		// kind switches the current context; give the user theirs back, jig always names its own
+		if p := strings.TrimSpace(string(previous)); p != "" {
+			_ = sh.New("kubectl", "config", "use-context", p).Run(ctx)
+		}
+	}
+	if r.opt.RegistryPort > 0 {
+		_ = sh.New("docker", "network", "connect", "kind", reg).Run(ctx)
+		if err := r.useRegistry(ctx, reg); err != nil {
+			return err
+		}
+	}
+	for _, img := range r.opt.Preload {
+		fmt.Fprintf(out, "loading %s\n", img)
+		if err := r.LoadImage(ctx, img); err != nil {
+			return err
+		}
+	}
+	if r.Opt.CreateNamespace || r.Opt.Namespace != "default" {
+		_ = sh.New("kubectl", "--context", r.Opt.Context, "create", "namespace", r.Opt.Namespace).Run(ctx)
+	}
+	fmt.Fprintf(out, "ready: context %s, namespace %s\n", r.Opt.Context, r.Opt.Namespace)
+	return nil
+}
+
+// useRegistry points every node's containerd at the registry container for localhost:<port> images.
+func (r *Runtime) useRegistry(ctx context.Context, reg string) error {
+	nodes, err := sh.New("kind", "get", "nodes", "--name", r.opt.Cluster).Output(ctx)
+	if err != nil {
+		return err
+	}
+	dir := fmt.Sprintf("/etc/containerd/certs.d/localhost:%d", r.opt.RegistryPort)
+	hosts := fmt.Sprintf("[host.\"http://%s:5000\"]\n", reg)
+	for _, n := range strings.Fields(string(nodes)) {
+		cmd := sh.New("docker", "exec", "-i", n, "sh", "-c", "mkdir -p "+dir+" && cat > "+dir+"/hosts.toml")
+		cmd.Stdin = strings.NewReader(hosts)
+		if err := cmd.Run(ctx); err != nil {
+			return fmt.Errorf("node %s: %w", n, err)
+		}
+	}
+	return nil
+}
+
+func noProxyEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		switch strings.ToLower(k) {
+		case "http_proxy", "https_proxy", "all_proxy":
+			env = append(env, k+"=")
+		}
+	}
+	return env
+}
+
+// hostIP is this machine as seen from kind's pods: the gateway of the docker network the nodes are on.
+func hostIP(ctx context.Context) (string, error) {
+	out, err := sh.New("docker", "network", "inspect", "kind", "-f", "{{range .IPAM.Config}}{{.Gateway}} {{end}}").Output(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, ip := range strings.Fields(string(out)) {
+		if !strings.Contains(ip, ":") {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("docker network kind has no IPv4 gateway")
+}

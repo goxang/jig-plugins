@@ -1,0 +1,285 @@
+// Package kv drives load generators that run as services and read their rate from a key-value store:
+// the rate is written to a key (or one JSON field of it), start and stop scale the generator services,
+// and counters come from metrics queries when configured.
+package kv
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/goxang/jig/core"
+	"github.com/goxang/jig/plugin"
+	"github.com/goxang/jig/spec"
+)
+
+func init() {
+	plugin.Register(core.KindLoad, "kv", "generator services whose rate lives in a KV key (e.g. Consul); start/stop scales them", New)
+}
+
+type Options struct {
+	Store    string   `yaml:"store"` // the kv component
+	Key      string   `yaml:"key"`
+	Field    string   `yaml:"field"` // JSON field holding the rate, dotted for nested (a.b); empty: the whole value is the number
+	Services []string `yaml:"services"`
+	Replicas int      `yaml:"replicas"`
+	// RestartOnRate restarts running instances after a rate change, for generators that read it only at start
+	RestartOnRate bool `yaml:"restart_on_rate"`
+	Metrics       struct {
+		Source  string `yaml:"source"`
+		Sent    string `yaml:"sent"`
+		Failed  string `yaml:"failed"`
+		Latency string `yaml:"latency_p99"` // seconds
+		// PerInstance is a sent counter per generator instance, labelled pod or instance
+		PerInstance string `yaml:"per_instance"`
+	} `yaml:"metrics"`
+}
+
+type Gen struct {
+	opt Options
+	env core.Env
+}
+
+func New(env core.Env, c *spec.Component) (any, error) {
+	g := &Gen{env: env}
+	if err := c.Decode(&g.opt); err != nil {
+		return nil, err
+	}
+	if g.opt.Store == "" || g.opt.Key == "" {
+		return nil, fmt.Errorf("kv load generator needs store and key")
+	}
+	if g.opt.Replicas == 0 {
+		g.opt.Replicas = 1
+	}
+	return g, nil
+}
+
+func (g *Gen) ConfigKey() (string, string) { return g.opt.Store, g.opt.Key }
+func (g *Gen) Services() []string          { return g.opt.Services }
+
+func (g *Gen) store() (core.KV, error) {
+	v, err := g.env.Component(g.opt.Store)
+	if err != nil {
+		return nil, err
+	}
+	kv, ok := v.(core.KV)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a kv component", g.opt.Store)
+	}
+	return kv, nil
+}
+
+func (g *Gen) scale(ctx context.Context, n int) error {
+	for _, name := range g.opt.Services {
+		s, ok := g.env.Project().Services[name]
+		if !ok {
+			return fmt.Errorf("no service %q in the load generator's services list: check jig.yaml", name)
+		}
+		rt := g.env.Runtime()
+		if n > 0 {
+			// Start deploys a generator that was never deployed; Scale then sets the count
+			if err := rt.Start(ctx, s); err != nil {
+				return err
+			}
+		}
+		if err := rt.Scale(ctx, s, n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Gen) Start(ctx context.Context) error { return g.scale(ctx, g.opt.Replicas) }
+func (g *Gen) Stop(ctx context.Context) error  { return g.scale(ctx, 0) }
+
+// Replicas is how many generator instances run; each sends at the configured rate.
+func (g *Gen) Replicas(ctx context.Context) (int, error) {
+	n := 0
+	for _, name := range g.opt.Services {
+		rt, s, err := g.env.Owner(name)
+		if err != nil {
+			return 0, err
+		}
+		st, err := rt.Status(ctx, s)
+		if err != nil {
+			return 0, err
+		}
+		n = max(n, st.Desired)
+	}
+	return n, nil
+}
+
+func (g *Gen) SetReplicas(ctx context.Context, n int) error { return g.scale(ctx, max(n, 0)) }
+
+func (g *Gen) read(ctx context.Context) (map[string]any, float64, error) {
+	kv, err := g.store()
+	if err != nil {
+		return nil, 0, err
+	}
+	raw, ok, err := kv.Get(ctx, g.opt.Key)
+	if err != nil || !ok {
+		return map[string]any{}, 0, err
+	}
+	if g.opt.Field == "" {
+		f, _ := strconv.ParseFloat(string(raw), 64)
+		return nil, f, nil
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, 0, fmt.Errorf("%s is not JSON: %w", g.opt.Key, err)
+	}
+	parent, leaf := fieldParent(doc, g.opt.Field, false)
+	f, _ := parent[leaf].(float64)
+	return doc, f, nil
+}
+
+// SetRate rewrites only the rate field, keeping the rest of the document.
+func (g *Gen) SetRate(ctx context.Context, rps float64) error {
+	kv, err := g.store()
+	if err != nil {
+		return err
+	}
+	if g.opt.Field == "" {
+		if err := kv.Put(ctx, g.opt.Key, []byte(strconv.FormatFloat(rps, 'f', -1, 64))); err != nil {
+			return err
+		}
+		return g.restartRunning(ctx)
+	}
+	doc, _, err := g.read(ctx)
+	if err != nil {
+		return err
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	parent, leaf := fieldParent(doc, g.opt.Field, true)
+	parent[leaf] = rps
+	raw, _ := json.MarshalIndent(doc, "", "  ")
+	if err := kv.Put(ctx, g.opt.Key, raw); err != nil {
+		return err
+	}
+	return g.restartRunning(ctx)
+}
+
+func (g *Gen) restartRunning(ctx context.Context) error {
+	if !g.opt.RestartOnRate {
+		return nil
+	}
+	for _, name := range g.opt.Services {
+		rt, s, err := g.env.Owner(name)
+		if err != nil {
+			return err
+		}
+		if st, err := rt.Status(ctx, s); err != nil || st.Desired == 0 {
+			continue
+		}
+		if err := rt.Restart(ctx, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Gen) Status(ctx context.Context) (core.LoadStatus, error) {
+	_, rate, err := g.read(ctx)
+	if err != nil {
+		return core.LoadStatus{}, err
+	}
+	st := core.LoadStatus{Rate: rate, Extra: map[string]string{"key": g.opt.Key}}
+	// the counters are metric queries: they run beside the replica lookups, not after them
+	var counted core.LoadStatus
+	done := make(chan struct{})
+	go func() { defer close(done); g.counters(ctx, &counted) }()
+	replicas := 0
+	for _, name := range g.opt.Services {
+		if rt, s, err := g.env.Owner(name); err == nil {
+			if ss, err := rt.Status(ctx, s); err == nil {
+				replicas += ss.Ready
+				st.Running = st.Running || ss.Ready > 0
+			}
+		}
+	}
+	st.Extra["replicas"] = strconv.Itoa(replicas)
+	if replicas > 1 {
+		st.Extra["total"] = strconv.FormatFloat(rate*float64(replicas), 'f', -1, 64) + "/s"
+	}
+	<-done
+	st.Sent, st.Failed, st.Latency.P99, st.PerInstance = counted.Sent, counted.Failed, counted.Latency.P99, counted.PerInstance
+	return st, nil
+}
+
+func (g *Gen) counters(ctx context.Context, st *core.LoadStatus) {
+	m := g.opt.Metrics
+	if m.Source == "" {
+		return
+	}
+	v, err := g.env.Component(m.Source)
+	if err != nil {
+		return
+	}
+	met, ok := v.(core.Metrics)
+	if !ok {
+		return
+	}
+	one := func(q string) float64 {
+		if q == "" {
+			return 0
+		}
+		ss, err := met.Instant(ctx, q)
+		if err != nil || len(ss) == 0 {
+			return 0
+		}
+		return ss[0].Value
+	}
+	var sent, failed, p99 float64
+	var wg sync.WaitGroup
+	for _, q := range []struct {
+		query string
+		into  *float64
+	}{{m.Sent, &sent}, {m.Failed, &failed}, {m.Latency, &p99}} {
+		wg.Add(1)
+		go func() { defer wg.Done(); *q.into = one(q.query) }()
+	}
+	var ss []core.Sample
+	perErr := errors.New("no per-instance query")
+	if m.PerInstance != "" {
+		ss, perErr = met.Instant(ctx, m.PerInstance)
+	}
+	wg.Wait()
+	st.Sent, st.Failed = int64(sent), int64(failed)
+	st.Latency.P99 = time.Duration(p99 * float64(time.Second))
+	if perErr != nil {
+		return
+	}
+	st.PerInstance = map[string]int64{}
+	for _, s := range ss {
+		for _, l := range []string{"pod", "instance", "kubernetes_pod_name"} {
+			if id := s.Labels[l]; id != "" {
+				st.PerInstance[id] = int64(s.Value)
+				break
+			}
+		}
+	}
+}
+
+// fieldParent walks a dotted path to the object holding its last part, creating objects when create is set.
+func fieldParent(doc map[string]any, path string, create bool) (map[string]any, string) {
+	parts := strings.Split(path, ".")
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := doc[p].(map[string]any)
+		if !ok {
+			if !create {
+				return map[string]any{}, ""
+			}
+			next = map[string]any{}
+			doc[p] = next
+		}
+		doc = next
+	}
+	return doc, parts[len(parts)-1]
+}
