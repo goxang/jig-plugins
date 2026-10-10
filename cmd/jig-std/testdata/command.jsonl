@@ -1,0 +1,4 @@
+{"dir":">","msg":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"host":{"name":"jig","version":"1.0.0"},"protocols":["jig/1"]}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":1,"result":{"name":"command","version":"dev","protocol":"jig/1","provides":{"sources":{"load.status":{},"profiles.kinds":{}},"actions":{"builder.build":{"effect":"write"},"load.rate":{"effect":"write"},"load.start":{"effect":"write"},"load.stop":{"effect":"write"},"profiles.capture":{"effect":"read"}},"implements":["builder/1","profiles/1","load/1"]}}}}
+{"dir":">","msg":{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":2,"result":{}}}

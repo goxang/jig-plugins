@@ -1,0 +1,4 @@
+{"dir":">","msg":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"host":{"name":"jig","version":"1.0.0"},"protocols":["jig/1"]}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":1,"result":{"name":"consul","version":"dev","protocol":"jig/1","provides":{"sources":{"kv.all":{},"kv.get":{},"kv.list":{},"kv.ping":{},"kv.query-language":{},"kv.run-query":{}},"actions":{"kv.delete":{"effect":"danger"},"kv.put":{"effect":"write"}},"implements":["kv/1"]}}}}
+{"dir":">","msg":{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":2,"result":{}}}

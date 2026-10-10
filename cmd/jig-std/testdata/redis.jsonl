@@ -1,0 +1,4 @@
+{"dir":">","msg":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"host":{"name":"jig","version":"1.0.0"},"protocols":["jig/1"]}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":1,"result":{"name":"redis","version":"dev","protocol":"jig/1","provides":{"sources":{"cache.actions":{},"cache.browse":{},"cache.info":{},"cache.ping":{},"cache.query-at":{},"cache.query-language":{},"cache.run-query":{},"cache.suggest":{}},"actions":{"cache.delete-rows":{"effect":"danger"},"cache.do":{"effect":"write"},"cache.run-action":{"effect":"write"},"cache.set-cell":{"effect":"write"}},"implements":["cache/1"]}}}}
+{"dir":">","msg":{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":2,"result":{}}}

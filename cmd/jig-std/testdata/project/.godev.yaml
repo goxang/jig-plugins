@@ -1,0 +1,2 @@
+services:
+  worker: { path: ./cmd/worker, args: [--fast], group: [bg] }

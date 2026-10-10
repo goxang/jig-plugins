@@ -63,6 +63,11 @@ func names() []string {
 			out = append(out, n)
 		}
 	}
+	for n := range actions {
+		if plugins[n] == nil && importers[n] == nil {
+			out = append(out, n)
+		}
+	}
 	slices.Sort(out)
 	return out
 }
@@ -76,6 +81,9 @@ func describe(name string) string {
 	}
 	for n := range importers[name] {
 		ds = append(ds, "imports "+n)
+	}
+	if _, ok := actions[name]; ok {
+		ds = append(ds, "actions: "+name+".*")
 	}
 	slices.Sort(ds)
 	return strings.Join(ds, "; ")
@@ -155,7 +163,7 @@ func lookup() contracts.Lookup {
 
 func serve(name string) error {
 	kinds, ok := plugins[name]
-	if _, imports := importers[name]; !ok && !imports {
+	if !ok && importers[name] == nil && actions[name] == nil {
 		return fmt.Errorf("no plugin %q (have %s)", name, strings.Join(names(), ", "))
 	}
 	p := sdk.New(name).Version(version).Implements(implements(name)...)
@@ -167,6 +175,9 @@ func serve(name string) error {
 		register(p, s)
 	}
 	registerImporters(p, name)
+	if f := actions[name]; f != nil {
+		f(p)
+	}
 	p.Serve()
 	return nil
 }
