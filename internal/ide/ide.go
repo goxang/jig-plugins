@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goxang/jig-plugins/internal/sh"
 	"github.com/goxang/jig/core"
 	"github.com/goxang/jig/engine"
-	"github.com/goxang/jig-plugins/internal/sh"
 	"github.com/goxang/jig/spec"
 )
 

@@ -12,6 +12,7 @@ import (
 	loadcommand "github.com/goxang/jig-plugins/adapters/loadgen/command"
 	loadhttp "github.com/goxang/jig-plugins/adapters/loadgen/http"
 	loadkv "github.com/goxang/jig-plugins/adapters/loadgen/kv"
+	loadtool "github.com/goxang/jig-plugins/adapters/loadgen/tool"
 	"github.com/goxang/jig-plugins/adapters/logs/loki"
 	logsruntime "github.com/goxang/jig-plugins/adapters/logs/runtime"
 	"github.com/goxang/jig-plugins/adapters/messaging/kafka"
@@ -58,5 +59,8 @@ var plugins = map[string][]served{
 	"consul":     {{core.KindKV, (*consul.KV)(nil)}},
 	"http":       {{core.KindQuery, (*queryhttp.Query)(nil)}, {core.KindLoad, (*loadhttp.Gen)(nil)}},
 	"kv":         {{core.KindLoad, (*loadkv.Gen)(nil)}},
+	"k6":         {{core.KindLoad, (*loadtool.Gen)(nil)}},
+	"vegeta":     {{core.KindLoad, (*loadtool.Gen)(nil)}},
+	"ghz":        {{core.KindLoad, (*loadtool.Gen)(nil)}},
 	"ssh":        {{core.KindHosts, (*ssh.SSH)(nil)}},
 }

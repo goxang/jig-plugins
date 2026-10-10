@@ -82,7 +82,9 @@ func describe(name string) string {
 	for n := range importers[name] {
 		ds = append(ds, "imports "+n)
 	}
-	if _, ok := actions[name]; ok {
+	if r, ok := testRunners[name]; ok {
+		ds = append(ds, "tests: "+r.desc)
+	} else if _, ok := actions[name]; ok {
 		ds = append(ds, "actions: "+name+".*")
 	}
 	slices.Sort(ds)
@@ -93,6 +95,9 @@ func implements(name string) []string {
 	var out []string
 	for _, s := range plugins[name] {
 		out = append(out, contracts.ForKind(string(s.kind)).ID)
+	}
+	if _, ok := testRunners[name]; ok {
+		out = append(out, "tests/1")
 	}
 	return out
 }

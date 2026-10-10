@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,11 +46,11 @@ type Gen struct {
 
 	sent, failed atomic.Int64
 	inflight     atomic.Int64
-	lat          *reservoir
+	lat          *loadgen.Reservoir
 }
 
 func New(env core.Env, c *spec.Component) (any, error) {
-	g := &Gen{env: env, lat: newReservoir(4096)}
+	g := &Gen{env: env, lat: loadgen.NewReservoir(4096)}
 	if err := c.Decode(&g.opt); err != nil {
 		return nil, err
 	}
@@ -167,7 +166,7 @@ func (g *Gen) fire(ctx context.Context, url string) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	g.lat.add(time.Since(start))
+	g.lat.Add(time.Since(start))
 	if resp.StatusCode >= 400 {
 		g.failed.Add(1)
 	}
@@ -179,43 +178,7 @@ func (g *Gen) Status(context.Context) (core.LoadStatus, error) {
 	g.mu.Unlock()
 	st := core.LoadStatus{Running: running, Rate: g.rate.Get()}
 	st.Sent, st.Failed = g.sent.Load(), g.failed.Load()
-	st.Latency = g.lat.percentiles()
+	st.Latency = g.lat.Percentiles()
 	st.Extra = map[string]string{"in_flight": fmt.Sprint(g.inflight.Load()), "target": g.opt.Target}
 	return st, nil
-}
-
-// reservoir keeps the most recent latencies for percentiles.
-type reservoir struct {
-	mu   sync.Mutex
-	buf  []time.Duration
-	next int
-	full bool
-}
-
-func newReservoir(n int) *reservoir { return &reservoir{buf: make([]time.Duration, n)} }
-
-func (r *reservoir) add(d time.Duration) {
-	r.mu.Lock()
-	r.buf[r.next] = d
-	r.next = (r.next + 1) % len(r.buf)
-	if r.next == 0 {
-		r.full = true
-	}
-	r.mu.Unlock()
-}
-
-func (r *reservoir) percentiles() core.Latency {
-	r.mu.Lock()
-	n := r.next
-	if r.full {
-		n = len(r.buf)
-	}
-	s := append([]time.Duration(nil), r.buf[:n]...)
-	r.mu.Unlock()
-	if len(s) == 0 {
-		return core.Latency{}
-	}
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-	at := func(p float64) time.Duration { return s[min(len(s)-1, int(p*float64(len(s))))] }
-	return core.Latency{P50: at(.50), P95: at(.95), P99: at(.99)}
 }
