@@ -27,7 +27,7 @@ type Confluence struct {
 func Open(c *sdk.Ctx) (*Confluence, error) {
 	base := strings.TrimSuffix(forge.Config(c, "url"), "/")
 	if base == "" {
-		return nil, fmt.Errorf("set plugins.confluence.url (https://your-org.atlassian.net/wiki)")
+		return nil, sdk.Unavailable("confluence has no address", "set plugins.confluence.url (https://your-org.atlassian.net/wiki)")
 	}
 	ep := httpx.Endpoint{Headers: map[string]string{"Accept": "application/json"}}
 	tok := forge.Token(c, "CONFLUENCE_TOKEN", "ATLASSIAN_TOKEN")

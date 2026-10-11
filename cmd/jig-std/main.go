@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,8 +29,9 @@ import (
 var version = "dev"
 
 func main() {
+	const usage = "usage: jig-std <plugin> | jig-std install [--relative] [dir] | jig-std list"
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jig-std <plugin> | jig-std install [--relative] [dir] | jig-std list")
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 	var err error
@@ -44,6 +46,10 @@ func main() {
 		dir := filepath.Join(host.ConfigDir(), "plugins")
 		if len(args) > 0 {
 			dir = args[0]
+		}
+		if strings.HasPrefix(dir, "-") {
+			fmt.Fprintln(os.Stderr, usage)
+			os.Exit(2)
 		}
 		err = install(dir, relative)
 	case "list":
@@ -207,13 +213,13 @@ func register(p *sdk.Plugin, s *contracts.Served) {
 	for n, fn := range s.Sources {
 		p.Source(n, func(c *sdk.Ctx, a sdk.Args) (*sdk.Frame, error) {
 			f, err := fn(c, a)
-			return wire[sdk.Frame](f), err
-		})
+			return wire[sdk.Frame](f), unmet(err)
+		}, sdk.Arguments(s.Contract.ArgsSchema(n)))
 	}
 	for n, fn := range s.Streams {
 		p.Stream(n, func(c *sdk.Ctx, a sdk.Args, out *sdk.Out) error {
 			return fn(c, a, func(f *protocol.Frame) error { return out.Frame(wire[sdk.Frame](f)) })
-		})
+		}, sdk.Arguments(s.Contract.ArgsSchema(n)))
 	}
 	for n, fn := range s.Actions {
 		p.Action(n, s.Effects[n], func(c *sdk.Ctx, a sdk.Args) (*sdk.Result, error) {
@@ -221,8 +227,17 @@ func register(p *sdk.Plugin, s *contracts.Served) {
 			out, err := fn(c, a, w)
 			w.Flush()
 			return &sdk.Result{Outputs: out}, err
-		})
+		}, sdk.Arguments(s.Contract.ArgsSchema(n)))
 	}
+}
+
+// unmet marks a source asked outside any project as unavailable, which jig plugin test and the AI
+// tell apart from a bug (the SDK does the same for a tool that is missing or fails).
+func unmet(err error) error {
+	if !errors.Is(err, spec.ErrNotFound) {
+		return err
+	}
+	return &sdk.Error{Code: sdk.CodeUnavailable, Message: err.Error()}
 }
 
 func wire[T any](v any) *T {

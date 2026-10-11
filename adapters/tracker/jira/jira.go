@@ -26,7 +26,7 @@ type Jira struct {
 func Open(c *sdk.Ctx) (*Jira, error) {
 	base := strings.TrimSuffix(forge.Config(c, "url"), "/")
 	if base == "" {
-		return nil, fmt.Errorf("set plugins.jira.url (https://your-org.atlassian.net)")
+		return nil, sdk.Unavailable("jira has no address", "set plugins.jira.url (https://your-org.atlassian.net)")
 	}
 	ep := httpx.Endpoint{Headers: map[string]string{"Accept": "application/json"}}
 	tok := forge.Token(c, "JIRA_TOKEN", "JIRA_API_TOKEN", "ATLASSIAN_TOKEN")

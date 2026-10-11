@@ -26,6 +26,9 @@ func Open(c *sdk.Ctx) (forge.SCM, error) {
 	}
 	api := "https://api.github.com"
 	if !strings.HasSuffix(host, "://github.com") {
+		if forge.Config(c, "url") == "" {
+			return nil, sdk.Unavailable("origin is on "+host+", not GitHub", "set plugins.github.url for GitHub Enterprise")
+		}
 		api = host + "/api/v3"
 	}
 	cl := &forge.Client{Host: host, Project: project, Base: api + "/repos/" + project,

@@ -188,7 +188,7 @@ func open(c *sdk.Ctx) (backend, error) {
 	case "nexus":
 		base := strings.TrimSuffix(forge.Config(c, "url"), "/")
 		if base == "" {
-			return nil, fmt.Errorf("set plugins.registry.url (Nexus's address)")
+			return nil, sdk.Unavailable("the registry has no address", "set plugins.registry.url (Nexus's address)")
 		}
 		return nexus{&forge.Client{Base: base, Endpoint: httpx.Endpoint{User: user, Password: pass}}}, nil
 	case "", "docker":

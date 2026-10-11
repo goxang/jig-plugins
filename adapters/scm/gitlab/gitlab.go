@@ -23,6 +23,9 @@ func Open(c *sdk.Ctx) (forge.SCM, error) {
 	if err != nil {
 		return nil, err
 	}
+	if strings.HasSuffix(host, "://github.com") && forge.Config(c, "url") == "" {
+		return nil, sdk.Unavailable("origin is on GitHub, not GitLab", "set plugins.gitlab.url")
+	}
 	cl := &forge.Client{Host: host, Project: project, Base: host + "/api/v4/projects/" + url.PathEscape(project)}
 	if t := forge.Token(c, "GITLAB_TOKEN"); t != "" {
 		cl.Endpoint = httpx.Endpoint{Headers: map[string]string{"PRIVATE-TOKEN": t}}
