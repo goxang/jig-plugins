@@ -52,6 +52,12 @@ func main() {
 			os.Exit(2)
 		}
 		err = install(dir, relative)
+	case "tool":
+		if len(os.Args) < 3 || tools[os.Args[2]] == nil {
+			fmt.Fprintln(os.Stderr, "usage: jig-std tool usage|plugintree")
+			os.Exit(2)
+		}
+		err = tools[os.Args[2]](os.Args[3:])
 	case "list":
 		for _, n := range names() {
 			fmt.Printf("%-12s %s\n", n, describe(n))

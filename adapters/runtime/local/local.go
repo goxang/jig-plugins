@@ -109,6 +109,9 @@ func (r *Runtime) command(ctx context.Context, s *spec.Service, debug bool) ([]s
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return nil, err
 	}
+	if free, err := sh.FreeBytes(filepath.Dir(bin)); err == nil && free < minFree {
+		return nil, fmt.Errorf("%s: only %d MB free on the disk, not enough to build: `jig purge --days 0` empties logs and drops built binaries", s.Name, free>>20)
+	}
 	build := []string{"build", "-o", bin}
 	if debug {
 		build = append(build, "-gcflags=all=-N -l")
@@ -126,6 +129,18 @@ func (r *Runtime) command(ctx context.Context, s *spec.Service, debug bool) ([]s
 		args = s.Run.Args
 	}
 	return append([]string{bin}, args...), nil
+}
+
+const (
+	minFree   = 512 << 20 // below this a build would fill the disk
+	maxLogLen = 64 << 20  // a service's log is kept to this much when it starts: the old one moves to .1
+)
+
+// capLog moves a log that grew past maxLogLen aside (one generation), so a chatty service cannot fill the disk across restarts.
+func capLog(path string) {
+	if st, err := os.Stat(path); err == nil && st.Size() > maxLogLen {
+		_ = os.Rename(path, path+".1")
+	}
 }
 
 func (r *Runtime) Start(ctx context.Context, s *spec.Service) error {
@@ -154,6 +169,7 @@ func (r *Runtime) start(ctx context.Context, s *spec.Service, wrap func([]string
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
 	}
+	capLog(logPath)
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
