@@ -106,6 +106,9 @@ type tf struct {
 
 func open(c *sdk.Ctx, stack string) (*tf, error) {
 	stacks := Stacks(c)
+	if len(stacks) == 0 {
+		return nil, errors.New("no terraform stacks: no *.tf files in this repository and no plugins.terraform.stacks")
+	}
 	if stack == "" && len(stacks) == 1 {
 		for n := range stacks {
 			stack = n

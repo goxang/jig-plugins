@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/goxang/jig-plugins/internal/forge"
-	"github.com/goxang/jig-plugins/internal/frames"
 	"github.com/goxang/jig-plugins/internal/sh"
 	"github.com/goxang/jig/core"
 	"github.com/goxang/jig/plugin"
@@ -252,8 +251,11 @@ func Register(p *sdk.Plugin) {
 			args := append(slices.Clone(b.args), "--query", b.query)
 			if name == "aws.ecs" {
 				clusters, err := ecsClusters(c)
-				if err != nil || len(clusters) == 0 {
-					return frames.Of([]map[string]any{}), err
+				if err != nil {
+					return nil, err
+				}
+				if len(clusters) == 0 {
+					return Rows([]byte("[]"))
 				}
 				args = append(slices.Clone(b.args), clusters...)
 				args = append(args, "--query", b.query)
