@@ -112,6 +112,9 @@ func (r *Runtime) command(ctx context.Context, s *spec.Service, debug bool) ([]s
 	build := []string{"build", "-o", bin}
 	if debug {
 		build = append(build, "-gcflags=all=-N -l")
+	} else {
+		// no DWARF: a third smaller, and only a debugger reads it
+		build = append(build, "-ldflags=-w")
 	}
 	b := sh.New("go", append(build, s.Build.Go)...)
 	b.Dir = r.env.Project().Dir
