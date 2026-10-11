@@ -20,6 +20,7 @@ type grafanaPanel struct {
 	Targets []struct {
 		Expr   string `json:"expr"`
 		Legend string `json:"legendFormat"`
+		Hide   bool   `json:"hide"`
 	} `json:"targets"`
 	FieldConfig struct {
 		Defaults struct {
@@ -44,8 +45,10 @@ type grafanaPanel struct {
 var grafanaKinds = map[string]string{"timeseries": "line", "graph": "line", "stat": "stat", "singlestat": "stat",
 	"gauge": "gauge", "bargauge": "bar", "barchart": "bar", "table": "table"}
 
-var grafanaUnits = map[string]string{"reqps": "/s", "ops": "/s", "rps": "/s", "cps": "/s", "ms": "ms", "s": "s",
-	"bytes": "bytes", "decbytes": "bytes", "percent": "%", "percentunit": "ratio"}
+var grafanaUnits = map[string]string{"reqps": "/s", "ops": "/s", "rps": "/s", "cps": "/s", "wps": "/s", "iops": "/s",
+	"ns": "ns", "µs": "µs", "ms": "ms", "s": "s", "dtdurations": "s", "dtdurationms": "ms",
+	"bytes": "bytes", "decbytes": "bytes", "bits": "bits", "Bps": "bytes/s", "binBps": "bytes/s", "bps": "bits/s", "binbps": "bits/s",
+	"percent": "%", "percentunit": "ratio"}
 
 // Grafana turns dashboard JSON exports (a file or a folder of them) into dashboards: Prometheus panels
 // with their legends, units, thresholds and rows, and query, custom and interval variables.
@@ -150,13 +153,15 @@ func Grafana(path, _ string) (map[string]any, error) {
 	return map[string]any{"dashboards": dashboards}, nil
 }
 
-var labelValues = regexp.MustCompile(`label_values\(\s*(?:([^,]+?)\s*,)?\s*(\w+)\s*\)`)
+// the selector may hold commas ({job="$job", nodename="$nodename"}): the label is after the last one
+var labelValues = regexp.MustCompile(`label_values\(\s*(?:(.*\S)\s*,)?\s*(\w+)\s*\)\s*$`)
 
 func grafanaToPanel(p grafanaPanel) map[string]any {
 	var qs []map[string]any
 	for _, t := range p.Targets {
-		if t.Expr != "" {
-			qs = append(qs, map[string]any{"query": t.Expr, "legend": t.Legend})
+		// __auto is Grafana's "label set" legend: jig's default
+		if t.Expr != "" && !t.Hide {
+			qs = append(qs, map[string]any{"query": t.Expr, "legend": strings.TrimPrefix(t.Legend, "__auto")})
 		}
 	}
 	if len(qs) == 0 {

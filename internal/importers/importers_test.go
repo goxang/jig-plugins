@@ -111,14 +111,17 @@ func TestObservability(t *testing.T) {
 	d := t.TempDir()
 	g := got(t, Grafana, write(t, d, "dash/api.json", `{"dashboard":{"title":"API Overview",
  "templating":{"list":[{"name":"service","type":"query","query":"label_values(up, service)","current":{"value":"api"}},
-   {"name":"env","type":"custom","query":"dev, prod","includeAll":true}]},
+   {"name":"env","type":"custom","query":"dev, prod","includeAll":true},
+   {"name":"node","type":"query","query":{"query":"label_values(node_uname_info{job=\"$job\", nodename=\"$nodename\"}, instance)"}}]},
  "panels":[{"type":"row","title":"Traffic","panels":[
    {"type":"timeseries","title":"rps","gridPos":{"w":8},"fieldConfig":{"defaults":{"unit":"reqps","thresholds":{"steps":[{"value":null},{"value":100},{"value":500}]}}},
-    "targets":[{"expr":"sum(rate(x{service=~\"$service\"}[1m]))","legendFormat":"{{service}}"}]}]},
+    "targets":[{"expr":"sum(rate(x{service=~\"$service\"}[1m]))","legendFormat":"{{service}}"}]},
+   {"type":"stat","title":"auto","targets":[{"expr":"up","legendFormat":"__auto"},{"expr":"hidden_q","hide":true}]}]},
    {"type":"text","title":"notes"}]}}`), d)
 	has(t, g, `"api-overview"`, `"row":"Traffic"`, `"unit":"/s"`, `"warn":100`, `"crit":500`, `"width":8`, `"legend":"{{service}}"`,
-		`"service":{"default":"api","label":"service","query":"up"}`, `"values":["dev","prod"]`)
-	hasNot(t, g, "notes")
+		`"service":{"default":"api","label":"service","query":"up"}`, `"values":["dev","prod"]`,
+		`"node":{"label":"instance","query":"node_uname_info{job=\"$job\", nodename=\"$nodename\"}"}`)
+	hasNot(t, g, "notes", "__auto", "hidden_q")
 
 	pr := got(t, PrometheusRules, write(t, d, "rules.yml", `
 groups:
