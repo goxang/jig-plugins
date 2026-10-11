@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goxang/jig-plugins/adapters/vcs/git"
 	"github.com/goxang/jig-plugins/internal/frames"
 	"github.com/goxang/jig/sdk"
 )
@@ -160,14 +161,24 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 	}, sdk.Cache("30s"), sdk.Describe("merge requests (pull requests)"))
 
 	p.Action("scm.open", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
-		Source string `json:"source" jig:"required" desc:"the branch to merge (already pushed)"`
+		Source string `json:"source" desc:"the branch to merge, already pushed (default: the current one)"`
 		Target string `json:"target" desc:"default: the default branch"`
-		Title  string `json:"title" jig:"required" desc:"lead with the issue key: PIN-12 fix the parser"`
+		Title  string `json:"title" desc:"lead with the issue key: PIN-12 fix the parser (default: the last commit's subject)"`
 		Body   string `json:"body" desc:"description; link the issue"`
 	}) (*sdk.Result, error) {
 		f, err := open(c)
 		if err != nil {
 			return nil, err
+		}
+		if in.Source == "" {
+			if in.Source, err = git.Git(c, "rev-parse", "--abbrev-ref", "HEAD"); err != nil {
+				return nil, err
+			}
+		}
+		if in.Title == "" {
+			if in.Title, err = git.Git(c, "log", "-1", "--format=%s"); err != nil {
+				return nil, err
+			}
 		}
 		mr, err := f.Open(c, in.Source, in.Target, in.Title, in.Body)
 		if err != nil {

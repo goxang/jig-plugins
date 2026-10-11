@@ -1,7 +1,21 @@
 detect: {files: [.git]}
+# A row per changed file, its diff beside it. o opens a merge request on whichever forge plugin is in use.
 views:
   Changes:
     slot: tab
-    split:
-      - {widget: table, title: Status, source: git.vcs.status, refresh: 5s, width: 40%}
-      - {widget: diff, title: Diff, source: git.vcs.diff, refresh: 5s}
+    widget: table
+    title: Changes
+    source: git.vcs.status
+    refresh: 5s
+    preview: {widget: diff, source: git.vcs.diff, args: {path: '${row.path}', ref: HEAD}, width: 60%}
+    actions:
+      - {key: s, name: stage, action: git.vcs.stage, args: {path: '${row.path}'}}
+      - {key: u, name: unstage, action: git.vcs.stage, args: {path: '${row.path}', unstage: true}}
+      - {key: A, name: stage all, action: git.vcs.stage, args: {}}
+      - {key: d, name: discard, action: git.vcs.discard, args: {path: '${row.path}'}}
+      - {key: c, name: commit, action: git.vcs.commit, args: {message: '${ask}'}}
+      - {key: P, name: push, action: git.vcs.push, args: {}}
+      - {key: p, name: pull, action: git.vcs.pull, args: {}}
+      - {key: b, name: branch, action: git.vcs.checkout, args: {branch: '${ask}'}}
+      - {key: o, name: open MR, action: gitlab.scm.open, args: {title: '${ask}'}}
+      - {key: o, name: open PR, action: github.scm.open, args: {title: '${ask}'}}

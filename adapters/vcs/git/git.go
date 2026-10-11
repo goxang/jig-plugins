@@ -234,8 +234,14 @@ func Register(p *sdk.Plugin, export Export) {
 			args = append(args, "--", in.Path)
 		}
 		out, err := Git(c, args...)
+		if out == "" && err == nil && in.Path != "" && (in.Ref == "" || in.Ref == "HEAD") && !in.Staged {
+			if u, _ := Git(c, "ls-files", "--others", "--exclude-standard", "--", in.Path); u != "" {
+				// --no-index exits 1 when the files differ, which a new file always does
+				out, _ = Git(c, "diff", "--no-color", "--no-index", "--", os.DevNull, in.Path)
+			}
+		}
 		return frames.Text(out), err
-	}, sdk.Describe("a unified diff, a row per line"))
+	}, sdk.Describe("a unified diff, a row per line; an untracked path shows as all added"))
 
 	p.Source("vcs.blame", func(c *sdk.Ctx, in struct {
 		Path string `json:"path" jig:"required"`
@@ -296,7 +302,7 @@ func Register(p *sdk.Plugin, export Export) {
 
 	p.Action("vcs.commit", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
 		Message string   `json:"message" jig:"required"`
-		All     bool     `json:"all" desc:"stage every tracked change first"`
+		All     bool     `json:"all" desc:"stage every tracked change first (the default when nothing is staged)"`
 		Paths   []string `json:"paths" desc:"stage these first"`
 	}) (*sdk.Result, error) {
 		if len(in.Paths) > 0 {
@@ -304,12 +310,40 @@ func Register(p *sdk.Plugin, export Export) {
 				return nil, err
 			}
 		}
+		if !in.All && len(in.Paths) == 0 {
+			staged, _ := Git(c, "diff", "--cached", "--name-only")
+			in.All = staged == ""
+		}
 		args := []string{"commit", "-m", in.Message}
 		if in.All {
 			args = append(args, "--all")
 		}
 		return run(c, args...)
 	})
+
+	p.Action("vcs.stage", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Path    string `json:"path" desc:"default: every change"`
+		Unstage bool   `json:"unstage"`
+	}) (*sdk.Result, error) {
+		switch {
+		case in.Unstage && in.Path == "":
+			return run(c, "restore", "--staged", ".")
+		case in.Unstage:
+			return run(c, "restore", "--staged", "--", in.Path)
+		case in.Path == "":
+			return run(c, "add", "--all")
+		}
+		return run(c, "add", "--", in.Path)
+	}, sdk.Describe("stage a path for the next commit, or every change; unstage takes it back out"))
+
+	p.Action("vcs.discard", sdk.EffectDanger, func(c *sdk.Ctx, in struct {
+		Path string `json:"path" jig:"required"`
+	}) (*sdk.Result, error) {
+		if u, _ := Git(c, "ls-files", "--others", "--exclude-standard", "--", in.Path); u != "" {
+			return run(c, "clean", "-f", "--", in.Path)
+		}
+		return run(c, "restore", "--staged", "--worktree", "--source=HEAD", "--", in.Path)
+	}, sdk.Describe("throw away a path's changes, staged or not (confirmed: they are not recoverable)"))
 
 	p.Action("vcs.pull", sdk.EffectWrite, func(c *sdk.Ctx, _ sdk.Empty) (*sdk.Result, error) {
 		return run(c, "pull", "--ff-only")
