@@ -16,7 +16,7 @@ func TestReleaseInstalls(t *testing.T) {
 	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(k, t.TempDir())
 	}
-	pub, secret, err := Keygen()
+	pub, secret, err := host.Keygen()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +42,17 @@ func TestReleaseInstalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// a mirror serves <name>/<version>/<file>
+	// a mirror serves <name>/<version>/<file> and files/<shared file>
 	mirror := filepath.Join(tmp, "mirror")
 	_ = os.MkdirAll(mirror, 0o755)
 	b, _ := os.ReadFile(r.Index)
 	_ = os.WriteFile(filepath.Join(mirror, "index.json"), b, 0o644)
+	_ = os.MkdirAll(filepath.Join(mirror, "files"), 0o755)
+	shared, _ := filepath.Glob(filepath.Join(r.Out, "jig-std_*.gz"))
+	for _, f := range shared {
+		data, _ := os.ReadFile(f)
+		_ = os.WriteFile(filepath.Join(mirror, "files", filepath.Base(f)), data, 0o644)
+	}
 	files, _ := filepath.Glob(filepath.Join(r.Out, "*.tar.gz"))
 	for _, f := range files {
 		var name string

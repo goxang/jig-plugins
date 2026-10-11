@@ -1,0 +1,49 @@
+name: release
+
+# A v* tag packs every plugin for each platform, signs it with the JIG_SIGNING_KEY secret, publishes
+# the archives as a GitHub release and commits the updated registry/index.json to main.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  GOPRIVATE: github.com/goxang
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # goxang/jig is private while pre-1.0; GOXANG_READ_TOKEN is a read-only token for it
+      - run: git config --global url."https://x-access-token:${{ secrets.GOXANG_READ_TOKEN }}@github.com/goxang/".insteadOf "https://github.com/goxang/"
+      - name: build
+        run: |
+          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "dist/bin/jig-std_${t%/*}_${t#*/}" ./cmd/jig-std
+          done
+          go run ./cmd/jig-std install --relative dist/manifests
+      - name: pack and sign
+        env:
+          JIG_SIGNING_KEY: ${{ secrets.JIG_SIGNING_KEY }}
+        run: |
+          test -n "$JIG_SIGNING_KEY" || { echo "JIG_SIGNING_KEY is not set"; exit 1; }
+          mkdir -p registry && git show origin/main:registry/index.json > registry/index.json 2>/dev/null || rm -f registry/index.json
+          go run ./cmd/jig-index -version "$GITHUB_REF_NAME" -url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/release/* --title "jig-plugins $GITHUB_REF_NAME" --generate-notes
+          git config user.name github-actions && git config user.email github-actions@users.noreply.github.com
+          cp registry/index.json "$RUNNER_TEMP/index.json"
+          git checkout -qf -B main origin/main
+          mkdir -p registry && cp "$RUNNER_TEMP/index.json" registry/index.json && git add registry/index.json
+          git commit -qm "chore: registry index for $GITHUB_REF_NAME" && git push origin HEAD:main

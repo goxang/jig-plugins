@@ -1,6 +1,6 @@
 // Command jig-index packs a release of the official plugins and writes registry/index.json: one
-// archive per Go plugin and platform (its manifest and bin/jig-std), one per declarative plugin,
-// each with its sha256 and, when JIG_SIGNING_KEY is set, a minisign signature.
+// archive per Go plugin and platform (its manifest; bin/jig-std is a shared file, one per platform),
+// one per declarative plugin, each with its sha256 and, when JIG_SIGNING_KEY is set, a minisign signature.
 //
 //	jig-std install --relative dist/manifests
 //	jig-index -version 1.0.0 -manifests dist/manifests -plugins plugins -bins dist/bin \
@@ -12,10 +12,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -27,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/blake2b"
 	"gopkg.in/yaml.v3"
 
 	"github.com/goxang/jig/host"
@@ -35,7 +31,7 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "keygen" {
-		pub, secret, err := Keygen()
+		pub, secret, err := host.Keygen()
 		if err != nil {
 			fail(err)
 		}
@@ -81,6 +77,26 @@ func (r *Release) Run() error {
 		return err
 	}
 	bins, _ := filepath.Glob(filepath.Join(r.Bins, "jig-std_*"))
+	// one jig-std per platform, which every Go plugin's artifact lists as a shared file
+	std := map[string]host.Artifact{}
+	for _, bin := range bins {
+		plat := strings.Replace(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(bin), "jig-std_"), ".exe"), "_", "/", 1)
+		data, err := os.ReadFile(bin)
+		if err != nil {
+			return err
+		}
+		var gz bytes.Buffer
+		zw, _ := gzip.NewWriterLevel(&gz, gzip.BestCompression)
+		if _, err := zw.Write(data); err != nil {
+			return err
+		}
+		if err := zw.Close(); err != nil {
+			return err
+		}
+		if std[plat], err = r.publish(fmt.Sprintf("jig-std_%s_%s.gz", r.Version, strings.ReplaceAll(plat, "/", "_")), gz.Bytes()); err != nil {
+			return err
+		}
+	}
 	packs := map[string][]string{}
 	var entries []*host.Manifest
 	for _, root := range []string{r.Manifests, r.Plugins} {
@@ -103,14 +119,15 @@ func (r *Release) Run() error {
 				if len(bins) == 0 {
 					return fmt.Errorf("no jig-std_<os>_<arch> binaries in %s", r.Bins)
 				}
-				for _, bin := range bins {
-					plat := strings.Replace(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(bin), "jig-std_"), ".exe"), "_", "/", 1)
-					files := map[string]string{"bin/jig-std": bin}
-					if arts[plat], err = r.pack(m, dir, files, strings.ReplaceAll(plat, "/", "_")); err != nil {
+				for plat, bin := range std {
+					a, err := r.pack(m, dir, strings.ReplaceAll(plat, "/", "_"))
+					if err != nil {
 						return err
 					}
+					a.Files = map[string]host.Artifact{"bin/jig-std": bin}
+					arts[plat] = a
 				}
-			} else if arts["any"], err = r.pack(m, dir, nil, "any"); err != nil {
+			} else if arts["any"], err = r.pack(m, dir, "any"); err != nil {
 				return err
 			}
 			for dep := range m.Requires {
@@ -163,8 +180,8 @@ func provides(m *host.Manifest) map[string]any {
 }
 
 // pack writes <name>_<version>_<platform>.tar.gz: dir's files with the manifest at its release
-// version, plus extra (archive path: local file), and returns its artifact.
-func (r *Release) pack(m *host.Manifest, dir string, extra map[string]string, plat string) (host.Artifact, error) {
+// version, and returns its artifact.
+func (r *Release) pack(m *host.Manifest, dir string, plat string) (host.Artifact, error) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
@@ -197,29 +214,24 @@ func (r *Release) pack(m *host.Manifest, dir string, extra map[string]string, pl
 	if err != nil {
 		return host.Artifact{}, err
 	}
-	for name, src := range extra {
-		data, err := os.ReadFile(src)
-		if err != nil {
-			return host.Artifact{}, err
-		}
-		if err := add(name, 0o755, data); err != nil {
-			return host.Artifact{}, err
-		}
-	}
 	if err := tw.Close(); err != nil {
 		return host.Artifact{}, err
 	}
 	if err := zw.Close(); err != nil {
 		return host.Artifact{}, err
 	}
-	file := fmt.Sprintf("%s_%s_%s.tar.gz", m.Name, r.Version, plat)
-	if err := os.WriteFile(filepath.Join(r.Out, file), buf.Bytes(), 0o644); err != nil {
+	return r.publish(fmt.Sprintf("%s_%s_%s.tar.gz", m.Name, r.Version, plat), buf.Bytes())
+}
+
+// publish writes file into the release with its signature when there is a key, and returns its artifact.
+func (r *Release) publish(file string, data []byte) (host.Artifact, error) {
+	if err := os.WriteFile(filepath.Join(r.Out, file), data, 0o644); err != nil {
 		return host.Artifact{}, err
 	}
-	sum := sha256.Sum256(buf.Bytes())
+	sum := sha256.Sum256(data)
 	a := host.Artifact{URL: strings.TrimSuffix(r.URL, "/") + "/" + file, SHA256: hex.EncodeToString(sum[:])}
 	if r.Key != "" {
-		sig, err := Sign(r.Key, file, buf.Bytes())
+		sig, err := host.Sign(r.Key, file, data)
 		if err != nil {
 			return host.Artifact{}, err
 		}
@@ -247,36 +259,4 @@ func setVersion(manifest []byte, version string) ([]byte, error) {
 	}
 	root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "version"}, &yaml.Node{Kind: yaml.ScalarNode, Value: version, Tag: "!!str"})
 	return yaml.Marshal(&doc)
-}
-
-// Keygen makes a signing key: the minisign public key, and the secret as JIG_SIGNING_KEY holds it
-// (base64 of the 8-byte key id and the 32-byte ed25519 seed).
-func Keygen() (pub, secret string, err error) {
-	id := make([]byte, 8)
-	if _, err := rand.Read(id); err != nil {
-		return "", "", err
-	}
-	pk, sk, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-	pub = base64.StdEncoding.EncodeToString(slices.Concat([]byte("Ed"), id, pk))
-	return pub, base64.StdEncoding.EncodeToString(slices.Concat(id, sk.Seed())), nil
-}
-
-// Sign makes a prehashed minisign signature file of data.
-func Sign(secret, file string, data []byte) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(secret))
-	if err != nil || len(raw) != 8+ed25519.SeedSize {
-		return "", fmt.Errorf("JIG_SIGNING_KEY is not a jig-index keygen secret")
-	}
-	id, sk := raw[:8], ed25519.NewKeyFromSeed(raw[8:])
-	h := blake2b.Sum512(data)
-	sig := ed25519.Sign(sk, h[:])
-	trusted := fmt.Sprintf("timestamp:%d\tfile:%s\thashed", time.Now().Unix(), file)
-	global := ed25519.Sign(sk, slices.Concat(sig, []byte(trusted)))
-	return "untrusted comment: signature from jig-index secret key\n" +
-		base64.StdEncoding.EncodeToString(slices.Concat([]byte("ED"), id, sig)) + "\n" +
-		"trusted comment: " + trusted + "\n" +
-		base64.StdEncoding.EncodeToString(global) + "\n", nil
 }
