@@ -1,11 +1,11 @@
-# A declarative plugin: one tab of terminal panes, no code jig runs. Copy it to start your own.
 name: arcade
-version: 1.1.0
-description: a Games tab of terminal panes (snake is plain bash; add your own games)
+version: 1.2.0
+description: a Games tab of terminal panes (snake and tic-tac-toe in bash)
 publisher: goxang
 views:
   Games:
     slot: {tab: {key: G}}
     tabs:
       Snake: {widget: terminal, dir: ., command: "bash snake.sh"}
+      "Tic Tac Toe": {widget: terminal, dir: ., command: "bash tictactoe.sh"}
       Shell: {widget: terminal, keep: true}
