@@ -128,6 +128,30 @@ func Status(out string) []change {
 	return cs
 }
 
+// matching keeps the changes whose path has q or whose file content does (one git grep over them all).
+func matching(c *sdk.Ctx, cs []change, q string) []change {
+	byName := map[string]bool{}
+	var paths []string
+	for _, ch := range cs {
+		if strings.Contains(strings.ToLower(ch.Path), strings.ToLower(q)) {
+			byName[ch.Path] = true
+		}
+		paths = append(paths, ch.Path)
+	}
+	args := append([]string{"grep", "-I", "-l", "-i", "-F", "--untracked", "-e", q, "--"}, paths...)
+	out, _ := Git(c, args...)
+	for _, l := range strings.Split(out, "\n") {
+		byName[l] = true
+	}
+	var keep []change
+	for _, ch := range cs {
+		if byName[ch.Path] {
+			keep = append(keep, ch)
+		}
+	}
+	return keep
+}
+
 const logFormat = "%x1f%H%x1f%an%x1f%at%x1f%s%x1f%D"
 
 // Log parses `git log --graph --format=logFormat`: graph lines with no commit keep only their graph.
@@ -175,10 +199,16 @@ func Blame(out string) []blame {
 type Export func(ctx context.Context, ref string) (string, error)
 
 func Register(p *sdk.Plugin, export Export) {
-	p.Source("vcs.status", func(c *sdk.Ctx, _ sdk.Empty) (*sdk.Frame, error) {
+	p.Source("vcs.status", func(c *sdk.Ctx, in struct {
+		Query string `json:"query" desc:"keep the files whose path or content has this text"`
+	}) (*sdk.Frame, error) {
 		out, err := Git(c, "status", "--porcelain=v1", "--untracked-files=all")
-		return frames.Of(Status(out)), err
-	}, sdk.Describe("changed files: path and state"))
+		cs := Status(out)
+		if in.Query != "" && err == nil {
+			cs = matching(c, cs, in.Query)
+		}
+		return frames.Of(cs), err
+	}, sdk.Describe("changed files: path and state; query keeps those with the text in their path or content"))
 
 	p.Source("vcs.log", func(c *sdk.Ctx, in struct {
 		Limit int    `json:"limit" desc:"commits (default 100)"`
@@ -293,12 +323,19 @@ func Register(p *sdk.Plugin, export Export) {
 		Branch string `json:"branch" jig:"required"`
 		Create bool   `json:"create" desc:"create the branch"`
 	}) (*sdk.Result, error) {
-		args := []string{"switch", in.Branch}
 		if in.Create {
-			args = []string{"switch", "-c", in.Branch}
+			return run(c, "switch", "-c", in.Branch)
 		}
-		return run(c, args...)
-	}, sdk.Describe("switch to a branch"))
+		if _, err := Git(c, "switch", in.Branch); err == nil {
+			return &sdk.Result{Message: "on " + in.Branch}, nil
+		}
+		// not local yet: a remote branch or a release tag
+		Git(c, "fetch", "--tags", "--quiet", "origin")
+		if _, err := Git(c, "switch", in.Branch); err == nil {
+			return &sdk.Result{Message: "on " + in.Branch}, nil
+		}
+		return run(c, "switch", "--detach", in.Branch)
+	}, sdk.Describe("switch to a branch, a remote branch or a release tag (detached)"))
 
 	p.Action("vcs.commit", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
 		Message string   `json:"message" jig:"required"`

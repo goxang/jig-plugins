@@ -208,18 +208,21 @@ func (g GitHub) Retry(ctx context.Context, id string) error {
 	return g.Send(ctx, "POST", "/actions/jobs/"+id+"/rerun", nil, nil)
 }
 
-func (g GitHub) Releases(ctx context.Context) ([]forge.Release, error) {
+func (g GitHub) Releases(ctx context.Context, query string) ([]forge.Release, error) {
 	var raw []struct {
 		TagName     string    `json:"tag_name"`
 		Name        string    `json:"name"`
 		PublishedAt time.Time `json:"published_at"`
 		HTMLURL     string    `json:"html_url"`
 	}
-	if err := g.Get(ctx, "/releases?per_page=30", &raw); err != nil {
+	if err := g.Get(ctx, "/releases?per_page=100", &raw); err != nil {
 		return nil, err
 	}
 	out := make([]forge.Release, 0, len(raw))
 	for _, r := range raw {
+		if query != "" && !strings.Contains(strings.ToLower(r.TagName+" "+r.Name), strings.ToLower(query)) {
+			continue
+		}
 		out = append(out, forge.Release{Tag: r.TagName, Name: r.Name, Released: r.PublishedAt, URL: r.HTMLURL})
 	}
 	return out, nil

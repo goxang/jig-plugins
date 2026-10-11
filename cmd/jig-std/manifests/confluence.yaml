@@ -14,12 +14,13 @@ views:
         widget: table
         source: confluence.docs.pages
         refresh: 5m
-        columns: {id: {hide: true}, url: {hide: true}, updated: {hide: true}}
+        fold: parent
+        columns: {id: {hide: true}, parent: {hide: true}, kind: {width: 6}, url: {hide: true}, updated: {hide: true}}
         preview: {source: confluence.docs.read, args: {id: '${row.id}'}, field: markdown, width: 60%}
       Search:
         widget: table
         source: confluence.docs.search
         args: {query: ""}
         refresh: 60s
-        columns: {id: {hide: true}, url: {hide: true}, path: {hide: true}}
+        columns: {id: {hide: true}, kind: {width: 6}, url: {hide: true}, path: {hide: true}}
         preview: {source: confluence.docs.read, args: {id: '${row.id}'}, field: markdown, width: 60%}

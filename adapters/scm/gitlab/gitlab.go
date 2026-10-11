@@ -201,7 +201,10 @@ func (g GitLab) Retry(ctx context.Context, job string) error {
 	return g.Send(ctx, "POST", "/jobs/"+job+"/retry", nil, nil)
 }
 
-func (g GitLab) Releases(ctx context.Context) ([]forge.Release, error) {
+func (g GitLab) Releases(ctx context.Context, query string) ([]forge.Release, error) {
+	if query != "" {
+		return g.tags(ctx, query)
+	}
 	var raw []struct {
 		TagName    string    `json:"tag_name"`
 		Name       string    `json:"name"`
@@ -210,12 +213,37 @@ func (g GitLab) Releases(ctx context.Context) ([]forge.Release, error) {
 			Self string `json:"self"`
 		} `json:"_links"`
 	}
-	if err := g.Get(ctx, "/releases?per_page=30", &raw); err != nil {
+	if err := g.Get(ctx, "/releases?per_page=50&order_by=released_at&sort=desc", &raw); err != nil {
 		return nil, err
+	}
+	if len(raw) == 0 {
+		return g.tags(ctx, "")
 	}
 	out := make([]forge.Release, 0, len(raw))
 	for _, r := range raw {
 		out = append(out, forge.Release{Tag: r.TagName, Name: r.Name, Released: r.ReleasedAt, URL: r.Links.Self})
+	}
+	return out, nil
+}
+
+// tags searches every tag by name (a project's releases are its tags, and the releases API cannot search).
+func (g GitLab) tags(ctx context.Context, query string) ([]forge.Release, error) {
+	q := url.Values{"per_page": {"50"}, "order_by": {"updated"}, "sort": {"desc"}}
+	if query != "" {
+		q.Set("search", query)
+	}
+	var raw []struct {
+		Name   string `json:"name"`
+		Commit struct {
+			CreatedAt time.Time `json:"created_at"`
+		} `json:"commit"`
+	}
+	if err := g.Get(ctx, "/repository/tags?"+q.Encode(), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.Release, 0, len(raw))
+	for _, t := range raw {
+		out = append(out, forge.Release{Tag: t.Name, Name: t.Name, Released: t.Commit.CreatedAt, URL: g.Host + "/" + g.Project + "/-/tags/" + url.PathEscape(t.Name)})
 	}
 	return out, nil
 }

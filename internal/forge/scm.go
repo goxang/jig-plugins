@@ -129,7 +129,8 @@ type SCM interface {
 	// Log is a job's output so far and whether the job has finished.
 	Log(ctx context.Context, job string) ([]string, bool, error)
 	Retry(ctx context.Context, job string) error
-	Releases(ctx context.Context) ([]Release, error)
+	// Releases is the latest ones, or those whose tag or name match query across all of them.
+	Releases(ctx context.Context, query string) ([]Release, error)
 	Issues(ctx context.Context, query, assignee string) ([]Issue, error)
 	Issue(ctx context.Context, key string) (*IssueDetail, error)
 	Transition(ctx context.Context, key, status string) error
@@ -312,12 +313,14 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 		return do(c, open, "retried job "+in.Job, func(f SCM) error { return f.Retry(c, in.Job) })
 	})
 
-	p.Source("scm.releases", func(c *sdk.Ctx, _ sdk.Empty) (*sdk.Frame, error) {
+	p.Source("scm.releases", func(c *sdk.Ctx, in struct {
+		Query string `json:"query" desc:"search every release, not only the latest"`
+	}) (*sdk.Frame, error) {
 		f, err := open(c)
 		if err != nil {
 			return nil, err
 		}
-		rows, err := f.Releases(c)
+		rows, err := f.Releases(c, in.Query)
 		return frames.Of(rows), err
 	}, sdk.Cache("60s"))
 

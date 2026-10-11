@@ -15,9 +15,17 @@ views:
         refresh: 30s
         columns: {url: {hide: true}}
         actions:
+          - {key: o, name: checkout target, action: git.vcs.checkout, args: {branch: '${row.target}'}}
+          - {key: O, name: checkout source, action: git.vcs.checkout, args: {branch: '${row.source}'}}
           - {key: i, name: its issue, command: 'open Jira ${row.issue}'}
           - {key: a, name: approve, action: gitlab.scm.approve, args: {mr: '${row.id}'}}
           - {key: c, name: comment, action: gitlab.scm.comment, args: {mr: '${row.id}', body: '${ask}'}}
       Pipelines: {widget: table, source: gitlab.scm.pipelines, refresh: 15s}
-      Releases: {widget: table, source: gitlab.scm.releases, refresh: 60s}
+      Releases:
+        widget: table
+        source: gitlab.scm.releases
+        args: {query: ''}
+        refresh: 60s
+        actions:
+          - {key: o, name: checkout, action: git.vcs.checkout, args: {branch: '${row.tag}'}}
       Issues: {widget: table, source: gitlab.tracker.issues, refresh: 60s}

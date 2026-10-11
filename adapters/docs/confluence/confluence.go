@@ -61,8 +61,17 @@ func (cf *Confluence) spaceCQL() string {
 }
 
 type content struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Container *struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"container"`
+	Extensions struct {
+		MediaType string `json:"mediaType"`
+		FileSize  int64  `json:"fileSize"`
+	} `json:"extensions"`
 	Space   struct{ Key string }
 	Version struct {
 		Number int       `json:"number"`
@@ -76,12 +85,14 @@ type content struct {
 		Storage struct{ Value string } `json:"storage"`
 	} `json:"body"`
 	Links struct {
-		WebUI string `json:"webui"`
+		WebUI    string `json:"webui"`
+		Download string `json:"download"`
 	} `json:"_links"`
 }
 
 type page struct {
 	ID      string    `json:"id"`
+	Kind    string    `json:"kind"`
 	Title   string    `json:"title"`
 	Path    string    `json:"path"`
 	Updated time.Time `json:"updated"`
@@ -93,7 +104,17 @@ func (cf *Confluence) page(c content) page {
 	for _, a := range c.Ancestors {
 		path = append(path, a.Title)
 	}
-	return page{ID: c.ID, Title: c.Title, Path: strings.Join(path, " / "), Updated: c.Version.When, URL: cf.Base + c.Links.WebUI}
+	if c.Container != nil {
+		path = append(path, c.Container.Title)
+	}
+	return page{ID: c.ID, Kind: kind(c), Title: c.Title, Path: strings.Join(path, " / "), Updated: c.Version.When, URL: cf.Base + cmp.Or(c.Links.WebUI, c.Links.Download)}
+}
+
+func kind(c content) string {
+	if c.Type == "attachment" {
+		return "file"
+	}
+	return "page"
 }
 
 func (cf *Confluence) list(ctx context.Context, path string) ([]page, error) {
@@ -227,9 +248,24 @@ func inline(s string) string {
 	return mdLink.ReplaceAllString(s, `<a href="$2">$1</a>`)
 }
 
+// fileDoc describes an attachment: what it is, where it lives and the link that downloads it.
+func (cf *Confluence) fileDoc(ct content) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", ct.Title)
+	if ct.Extensions.MediaType != "" {
+		fmt.Fprintf(&b, "- type: %s\n", ct.Extensions.MediaType)
+	}
+	fmt.Fprintf(&b, "- size: %.1f KB\n- updated: %s\n", float64(ct.Extensions.FileSize)/1024, ct.Version.When.Format("2006-01-02 15:04"))
+	if ct.Container != nil {
+		fmt.Fprintf(&b, "- attached to: %s (%s)\n", ct.Container.Title, ct.Container.ID)
+	}
+	fmt.Fprintf(&b, "\n[download](%s)\n", cf.Base+ct.Links.Download)
+	return b.String()
+}
+
 func Register(p *sdk.Plugin) {
 	p.Source("docs.search", func(c *sdk.Ctx, in struct {
-		Query string `json:"query" desc:"words, or CQL"`
+		Query string `json:"query" desc:"words, a file name, or CQL"`
 	}) (*sdk.Frame, error) {
 		cf, err := Open(c)
 		if err != nil {
@@ -237,14 +273,14 @@ func Register(p *sdk.Plugin) {
 		}
 		cql := in.Query
 		if !strings.ContainsAny(cql, "=~") {
-			cql = "type = page"
+			cql = "type in (page, attachment)"
 			if in.Query != "" {
-				cql += fmt.Sprintf(" AND text ~ %q", in.Query)
+				cql += fmt.Sprintf(" AND (title ~ %q OR text ~ %q)", in.Query, in.Query)
 			}
 			cql += cf.spaceCQL()
 			cql += " ORDER BY lastmodified DESC"
 		}
-		rows, err := cf.list(c, "/rest/api/content/search?limit=50&expand=space,version,ancestors&cql="+url.QueryEscape(cql))
+		rows, err := cf.list(c, "/rest/api/content/search?limit=50&expand=space,version,ancestors,container&cql="+url.QueryEscape(cql))
 		return frames.Of(rows), err
 	}, sdk.Cache("30s"))
 
@@ -255,9 +291,23 @@ func Register(p *sdk.Plugin) {
 		if err != nil {
 			return nil, err
 		}
+		if key, ok := strings.CutPrefix(in.ID, "space:"); ok {
+			var sp struct{ Homepage struct{ ID string } }
+			if err := cf.Get(c, "/rest/api/space/"+url.PathEscape(key)+"?expand=homepage", &sp); err != nil {
+				return nil, err
+			}
+			in.ID = sp.Homepage.ID
+		}
 		var ct content
-		if err := cf.Get(c, "/rest/api/content/"+url.PathEscape(in.ID)+"?expand=body.storage,version", &ct); err != nil {
+		if err := cf.Get(c, "/rest/api/content/"+url.PathEscape(in.ID)+"?expand=body.storage,version,container", &ct); err != nil {
 			return nil, err
+		}
+		if ct.Type == "attachment" {
+			return frames.Of([]struct {
+				ID       string `json:"id"`
+				Title    string `json:"title"`
+				Markdown string `json:"markdown"`
+			}{{ct.ID, ct.Title, cf.fileDoc(ct)}}), nil
 		}
 		type doc struct {
 			ID       string `json:"id"`
@@ -342,8 +392,9 @@ func Register(p *sdk.Plugin) {
 					break
 				}
 			}
-			rows = append(rows, treeRow{ID: sp.Homepage.ID, Title: cmp.Or(sp.Name, key) + " (" + key + ")", URL: cf.Base + "/display/" + key})
-			rows = append(rows, cf.tree(all)...)
+			files, _ := cf.attachments(c, key)
+			rows = append(rows, treeRow{ID: "space:" + key, Kind: "space", Title: cmp.Or(sp.Name, key) + " (" + key + ")", URL: cf.Base + "/display/" + key})
+			rows = append(rows, cf.tree(all, files, "space:"+key)...)
 		}
 		return frames.Of(rows), nil
 	}, sdk.Cache("5m"))
@@ -369,14 +420,37 @@ func Register(p *sdk.Plugin) {
 
 type treeRow struct {
 	ID      string    `json:"id"`
+	Parent  string    `json:"parent"`
 	Title   string    `json:"title"`
+	Kind    string    `json:"kind"`
 	Updated time.Time `json:"updated"`
 	URL     string    `json:"url"`
 }
 
-// tree lays a space's pages out in tree order under their parents (the last ancestor), each title
-// drawn with its branch: ├─ and └─ under │ rails.
-func (cf *Confluence) tree(pages []content) []treeRow {
+// attachments lists a space's files (up to 1000, the newest first).
+func (cf *Confluence) attachments(ctx context.Context, space string) ([]content, error) {
+	var all []content
+	for start := 0; start < 1000; start += 100 {
+		var res struct {
+			Results []content
+			Size    int
+		}
+		cql := url.QueryEscape(fmt.Sprintf("type = attachment AND space = %q ORDER BY lastmodified DESC", space))
+		path := fmt.Sprintf("/rest/api/content/search?limit=100&start=%d&expand=container,version&cql=%s", start, cql)
+		if err := cf.Get(ctx, path, &res); err != nil {
+			return all, err
+		}
+		all = append(all, res.Results...)
+		if res.Size < 100 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// tree lays a space's pages out depth first under their parents (the last ancestor), each page's
+// files under it; the space's id is the parent of the top pages.
+func (cf *Confluence) tree(pages, files []content, root string) []treeRow {
 	kids := map[string][]content{}
 	ids := map[string]bool{}
 	for _, p := range pages {
@@ -392,18 +466,33 @@ func (cf *Confluence) tree(pages []content) []treeRow {
 	for _, k := range kids {
 		slices.SortFunc(k, func(a, b content) int { return strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)) })
 	}
+	attached := map[string][]content{}
+	for _, f := range files {
+		owner := ""
+		if f.Container != nil && ids[f.Container.ID] {
+			owner = f.Container.ID
+		}
+		attached[owner] = append(attached[owner], f)
+	}
 	var out []treeRow
-	var walk func(parent, rail string)
-	walk = func(parent, rail string) {
-		for i, p := range kids[parent] {
-			branch, next := "├─ ", "│  "
-			if i == len(kids[parent])-1 {
-				branch, next = "└─ ", "   "
-			}
-			out = append(out, treeRow{ID: p.ID, Title: rail + branch + p.Title, Updated: p.Version.When, URL: cf.Base + p.Links.WebUI})
-			walk(p.ID, rail+next)
+	add := func(parent string, cs []content, kind string) {
+		for _, c := range cs {
+			out = append(out, treeRow{ID: c.ID, Parent: parent, Kind: kind, Title: c.Title, Updated: c.Version.When, URL: cf.Base + cmp.Or(c.Links.WebUI, c.Links.Download)})
 		}
 	}
-	walk("", "")
+	var walk func(parent string)
+	walk = func(parent string) {
+		for _, p := range kids[parent] {
+			up := parent
+			if up == "" {
+				up = root
+			}
+			add(up, []content{p}, "page")
+			walk(p.ID)
+			add(p.ID, attached[p.ID], "file")
+		}
+	}
+	walk("")
+	add(root, attached[""], "file")
 	return out
 }

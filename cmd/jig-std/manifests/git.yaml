@@ -1,11 +1,12 @@
 detect: {files: [.git]}
-# A row per changed file, its diff beside it. o opens a merge request on whichever forge plugin is in use.
+# A row per changed file, its diff beside it. / filters the paths; enter on no match searches the files' content. o opens a merge request on whichever forge plugin is in use.
 views:
   Changes:
     slot: tab
     widget: table
     title: Changes
     source: git.vcs.status
+    args: {query: ''}
     refresh: 5s
     preview: {widget: diff, source: git.vcs.diff, args: {path: '${row.path}', ref: HEAD}, width: 60%}
     actions:

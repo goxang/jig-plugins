@@ -36,12 +36,16 @@ func TestTree(t *testing.T) {
 		return c
 	}
 	cf := &Confluence{Client: &forge.Client{}}
-	rows := cf.tree([]content{page("3", "b child", "1"), page("1", "Home"), page("2", "a child", "1"), page("4", "deep", "1", "2")})
+	file := content{ID: "att9", Title: "spec.pdf", Container: &struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}{ID: "2"}}
+	rows := cf.tree([]content{page("3", "b child", "1"), page("1", "Home"), page("2", "a child", "1"), page("4", "deep", "1", "2")}, []content{file}, "space:P")
 	var got []string
 	for _, r := range rows {
-		got = append(got, r.Title)
+		got = append(got, r.Parent+">"+r.Title)
 	}
-	want := []string{"└─ Home", "   ├─ a child", "   │  └─ deep", "   └─ b child"}
+	want := []string{"space:P>Home", "1>a child", "2>deep", "2>spec.pdf", "1>b child"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("got %q", got)
 	}

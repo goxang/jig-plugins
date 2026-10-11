@@ -10,5 +10,11 @@ views:
     tabs:
       MRs: {widget: table, source: github.scm.mrs, refresh: 30s, actions: [{key: A, name: approve, action: github.scm.approve, args: {mr: '${row.id}'}}]}
       Pipelines: {widget: table, source: github.scm.pipelines, refresh: 15s}
-      Releases: {widget: table, source: github.scm.releases, refresh: 60s}
+      Releases:
+        widget: table
+        source: github.scm.releases
+        args: {query: ''}
+        refresh: 60s
+        actions:
+          - {key: o, name: checkout, action: git.vcs.checkout, args: {branch: '${row.tag}'}}
       Issues: {widget: table, source: github.tracker.issues, refresh: 60s}
