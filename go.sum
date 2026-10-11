@@ -63,10 +63,10 @@ github.com/google/go-containerregistry v0.20.3 h1:oNx7IdTI936V8CQRveCjaxOiegWwvM
 github.com/google/go-containerregistry v0.20.3/go.mod h1:w00pIgBRDVUDFM6bq+Qx8lwNWK+cxgCuX1vd3PIBDNI=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/goxang/jig v0.17.1-0.20261011031921-f5195134d946 h1:Hs2yIzBR7GY3ke2xnSCsrDzEF0QvKqJIVbYwlgpVpzM=
-github.com/goxang/jig v0.17.1-0.20261011031921-f5195134d946/go.mod h1:gLAKlh9MG2jBNwnu25psoW4Ilrwyo3Rs7BPzVtrqnTI=
-github.com/goxang/jig/sdk v0.0.0-20261011031921-f5195134d946 h1:RtlP3wf16m65ANgn5BXjRYQjocG/WKp+ta56br2RJQc=
-github.com/goxang/jig/sdk v0.0.0-20261011031921-f5195134d946/go.mod h1:Q8NJglyei+hEHkELXyMYnbjcb5qg7CnkEjzvd/iVH28=
+github.com/goxang/jig v0.18.1 h1:xRfE4r5ZNBbyiAQA3EZFTExhA5P4iMy9CcwIg1DbDWo=
+github.com/goxang/jig v0.18.1/go.mod h1:gLAKlh9MG2jBNwnu25psoW4Ilrwyo3Rs7BPzVtrqnTI=
+github.com/goxang/jig/sdk v0.0.0-20261011033032-a0560d1ffe9b h1:Gft3fnBFNq9SZjgEE1MSluuWa7eeTT8PrJpPXFrsPMs=
+github.com/goxang/jig/sdk v0.0.0-20261011033032-a0560d1ffe9b/go.mod h1:Q8NJglyei+hEHkELXyMYnbjcb5qg7CnkEjzvd/iVH28=
 github.com/goxang/scrub v1.1.1 h1:Julj55KjYslNYaXcqG8GJ9C+oW3e9JmzVCNgdxi94yc=
 github.com/goxang/scrub v1.1.1/go.mod h1:T/Q51gyX+SktS1/kUS/C6w+Ycv7+4WIye4IPwvpR4Q8=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
