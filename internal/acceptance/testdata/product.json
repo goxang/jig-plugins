@@ -1,0 +1,12 @@
+{
+  "GET /wiki/rest/api/content/100": {"id": "100", "title": "Checkout retries", "space": {"key": "ENG"}, "version": {"number": 3}, "body": {"storage": {"value": "<h1>Checkout retries</h1><p>A failed bank call is retried twice before the purchase fails.</p><ul><li>Retry on timeout and 5xx only</li><li>Show the retry count on the receipt page</li></ul>"}}, "_links": {"webui": "/spaces/ENG/pages/100"}},
+  "POST /wiki/rest/api/content": {"id": "200", "title": "Release report", "_links": {"webui": "/spaces/ENG/pages/200"}},
+  "POST /rest/api/2/issue": {"key": "SHOP-7"},
+  "GET /rest/api/2/search": {"issues": [{"key": "SHOP-7", "fields": {"summary": "Retry failed bank calls", "status": {"name": "In Progress"}, "updated": "2026-10-09T10:00:00.000+0000"}}, {"key": "SHOP-8", "fields": {"summary": "Retry count on the receipt", "status": {"name": "In review"}, "updated": "2026-10-09T11:00:00.000+0000"}}]},
+  "GET /rest/api/2/issue/SHOP-7/transitions": {"transitions": [{"id": "41", "name": "Review", "to": {"name": "In review"}}]},
+  "GET /rest/api/2/issue/SHOP-8/transitions": {"transitions": [{"id": "51", "name": "QA", "to": {"name": "Ready for QA"}}]},
+  "GET /api/v3/repos/acme/shop/pulls": [
+    {"number": 12, "title": "SHOP-7 retry failed bank calls", "user": {"login": "dana"}, "state": "open", "head": {"ref": "SHOP-7-retries"}, "base": {"ref": "main"}, "updated_at": "2026-10-10T09:00:00Z", "html_url": "https://git.example/acme/shop/pull/12"},
+    {"number": 11, "title": "SHOP-8 retry count on the receipt", "user": {"login": "lee"}, "state": "closed", "merged_at": "2026-10-09T15:00:00Z", "head": {"ref": "SHOP-8-receipt"}, "base": {"ref": "main"}, "updated_at": "2026-10-09T15:00:00Z", "html_url": "https://git.example/acme/shop/pull/11"}
+  ]
+}
