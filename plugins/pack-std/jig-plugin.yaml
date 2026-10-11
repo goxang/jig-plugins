@@ -1,0 +1,25 @@
+name: pack-std
+version: 1.0.0
+description: "the everyday set: runtimes, builders, imports and git"
+publisher: goxang
+requires:
+  local: ^1
+  docker: ^1
+  kubernetes: ^1
+  kind: ^1
+  go: ^1
+  command: ^1
+  compose: ^1
+  godev: ^1
+  rig: ^1
+  runtime: ^1
+  http: ^1
+  git: ^1
+  just: ^1
+  make: ^1
+  npm-scripts: ^1
+  procfile: ^1
+  dotenv: ^1
+  ssh: ^1
+  delve: ^1
+  goland: ^1

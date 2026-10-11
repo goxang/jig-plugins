@@ -1,0 +1,1 @@
+{"title": "API", "panels": [{"title": "Requests", "type": "timeseries", "targets": [{"expr": "sum(rate(http_requests_total[1m]))"}]}]}

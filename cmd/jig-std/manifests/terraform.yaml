@@ -1,0 +1,4 @@
+detect: {files: ["*.tf", "infra/*.tf", "terraform/*.tf"]}
+config:
+  binary: {type: string, description: "terraform or tofu; default whichever is installed"}
+  stacks: {type: object, additionalProperties: {type: string}, description: "stack name: directory; default every directory with .tf files"}

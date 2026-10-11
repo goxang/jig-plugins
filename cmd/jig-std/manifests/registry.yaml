@@ -1,0 +1,7 @@
+config:
+  type: {type: string, enum: [docker, nexus], description: "default docker (any OCI registry)"}
+  url: {type: string, description: "Nexus address, for type nexus"}
+  user: {type: string}
+  password: {type: string, secret: true}
+  insecure: {type: boolean, description: "plain HTTP or an unverified certificate"}
+permissions: {secrets: [REGISTRY_PASSWORD, NEXUS_PASSWORD]}

@@ -1,0 +1,6 @@
+groups:
+  - name: api
+    rules:
+      - alert: HighErrors
+        expr: sum(rate(errors_total[5m])) > 1
+        labels: {severity: critical}

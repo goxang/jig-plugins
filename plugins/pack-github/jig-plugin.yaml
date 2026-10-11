@@ -1,0 +1,7 @@
+name: pack-github
+version: 1.0.0
+description: "GitHub pull requests, Actions, issues and workflow import"
+publisher: goxang
+requires:
+  git: ^1
+  github: ^1

@@ -1,0 +1,3 @@
+## build the binary
+build:
+	go build ./...

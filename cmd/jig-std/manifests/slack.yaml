@@ -1,0 +1,5 @@
+config:
+  webhook: {type: string, secret: true, description: "incoming webhook; default $SLACK_WEBHOOK_URL"}
+  channel: {type: string, description: "default channel for a bot token"}
+  api: {type: string, description: "default https://slack.com/api"}
+permissions: {secrets: [SLACK_WEBHOOK_URL, SLACK_TOKEN]}

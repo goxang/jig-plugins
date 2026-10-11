@@ -1,0 +1,7 @@
+detect: {files: [.git]}
+views:
+  Changes:
+    slot: tab
+    split:
+      - {widget: table, title: Status, source: git.vcs.status, refresh: 5s, width: 40%}
+      - {widget: diff, title: Diff, source: git.vcs.diff, refresh: 5s}

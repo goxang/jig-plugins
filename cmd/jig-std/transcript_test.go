@@ -19,10 +19,20 @@ var record = flag.Bool("record", false, "record testdata/<plugin>.jsonl")
 
 // imports are the deterministic importer calls each importer plugin's transcript holds.
 var imports = map[string][]protocol.ImportParams{
-	"compose":    {{Importer: "compose", Files: []string{"compose.yaml"}, Dir: "."}},
-	"godev":      {{Importer: "godev", Files: []string{".godev.yaml"}, Dir: "."}},
-	"rig":        {{Importer: "rig", Files: []string{"rig.yaml"}, Dir: "."}},
-	"kubernetes": {{Importer: "kubernetes", Files: []string{"k8s"}, Dir: "."}},
+	"compose":     {{Importer: "compose", Files: []string{"compose.yaml"}, Dir: "."}},
+	"godev":       {{Importer: "godev", Files: []string{".godev.yaml"}, Dir: "."}},
+	"rig":         {{Importer: "rig", Files: []string{"rig.yaml"}, Dir: "."}},
+	"kubernetes":  {{Importer: "kubernetes", Files: []string{"k8s"}, Dir: "."}},
+	"just":        {{Importer: "just", Files: []string{"justfile"}, Dir: "."}},
+	"make":        {{Importer: "make", Files: []string{"Makefile"}, Dir: "."}},
+	"npm-scripts": {{Importer: "npm-scripts", Files: []string{"package.json"}, Dir: "."}},
+	"procfile":    {{Importer: "procfile", Files: []string{"Procfile"}, Dir: "."}},
+	"dotenv":      {{Importer: "dotenv", Files: []string{".env"}, Dir: "."}},
+	"openapi":     {{Importer: "openapi", Files: []string{"openapi.yaml"}, Dir: "."}},
+	"grafana":     {{Importer: "grafana", Files: []string{"grafana"}, Dir: "."}},
+	"prometheus":  {{Importer: "prometheus-rules", Files: []string{"rules.yml"}, Dir: "."}},
+	"gitlab":      {{Importer: "gitlab-ci", Files: []string{".gitlab-ci.yml"}, Dir: "."}},
+	"github":      {{Importer: "github-actions", Files: []string{".github/workflows"}, Dir: "."}},
 }
 
 // TestTranscriptsReplay plays every plugin's golden session (what it provides, then its imports)

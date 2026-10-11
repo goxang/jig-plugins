@@ -1,0 +1,13 @@
+name: pack-observability
+version: 1.0.0
+description: "metrics, logs, traces, profiles and their imports"
+publisher: goxang
+requires:
+  prometheus: ^1
+  scrape: ^1
+  loki: ^1
+  jaeger: ^1
+  tempo: ^1
+  zipkin: ^1
+  pprof: ^1
+  grafana: ^1

@@ -1,0 +1,7 @@
+name: pack-gitlab
+version: 1.0.0
+description: "GitLab merge requests, pipelines, issues and CI import"
+publisher: goxang
+requires:
+  git: ^1
+  gitlab: ^1

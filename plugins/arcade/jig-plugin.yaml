@@ -1,0 +1,11 @@
+# A declarative plugin: one tab of terminal panes, no code jig runs. Copy it to start your own.
+name: arcade
+version: 1.0.0
+description: a Games tab of terminal panes (snake needs Go; add your own games)
+publisher: goxang
+views:
+  Games:
+    slot: {tab: {key: G}}
+    tabs:
+      Snake: {widget: terminal, dir: ., command: "GOWORK=off go run ./snake"}
+      Shell: {widget: terminal, keep: true}

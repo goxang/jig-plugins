@@ -1,0 +1,14 @@
+detect: {git_remote: github}
+config:
+  url: {type: string, description: "web address; default from the origin remote"}
+  project: {type: string, description: "owner/repo; default from the origin remote"}
+  token: {type: string, secret: true}
+permissions: {secrets: [GITHUB_TOKEN, GH_TOKEN]}
+views:
+  GitHub:
+    slot: tab
+    tabs:
+      MRs: {widget: table, source: github.scm.mrs, refresh: 30s, actions: [{key: A, name: approve, action: github.scm.approve, args: {mr: '${row.id}'}}]}
+      Pipelines: {widget: table, source: github.scm.pipelines, refresh: 15s}
+      Releases: {widget: table, source: github.scm.releases, refresh: 60s}
+      Issues: {widget: table, source: github.tracker.issues, refresh: 60s}

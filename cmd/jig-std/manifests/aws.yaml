@@ -1,0 +1,13 @@
+config:
+  profile: {type: string}
+  region: {type: string}
+views:
+  AWS:
+    slot: tab
+    tabs:
+      EC2: {widget: table, source: aws.aws.ec2, refresh: 60s}
+      ECS: {widget: table, source: aws.aws.ecs, refresh: 60s}
+      EKS: {widget: table, source: aws.aws.eks, refresh: 60s}
+      RDS: {widget: table, source: aws.aws.rds, refresh: 60s}
+      S3: {widget: table, source: aws.aws.s3, refresh: 300s}
+      Lambda: {widget: table, source: aws.aws.lambda, refresh: 60s}

@@ -1,0 +1,10 @@
+detect: {files: [Chart.yaml, charts, helm]}
+config:
+  context: {type: string, description: "kube context"}
+  namespace: {type: string, description: "default all namespaces"}
+views:
+  Helm:
+    slot: tab
+    widget: table
+    source: helm.helm.releases
+    refresh: 30s

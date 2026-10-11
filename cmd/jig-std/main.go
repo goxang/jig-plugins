@@ -29,17 +29,23 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jig-std <plugin> | jig-std install [dir] | jig-std list")
+		fmt.Fprintln(os.Stderr, "usage: jig-std <plugin> | jig-std install [--relative] [dir] | jig-std list")
 		os.Exit(2)
 	}
 	var err error
 	switch os.Args[1] {
 	case "install":
-		dir := filepath.Join(host.ConfigDir(), "plugins")
-		if len(os.Args) > 2 {
-			dir = os.Args[2]
+		args := os.Args[2:]
+		// --relative writes manifests for release archives, which carry the binary as bin/jig-std
+		relative := len(args) > 0 && args[0] == "--relative"
+		if relative {
+			args = args[1:]
 		}
-		err = install(dir)
+		dir := filepath.Join(host.ConfigDir(), "plugins")
+		if len(args) > 0 {
+			dir = args[0]
+		}
+		err = install(dir, relative)
 	case "list":
 		for _, n := range names() {
 			fmt.Printf("%-12s %s\n", n, describe(n))
@@ -84,6 +90,8 @@ func describe(name string) string {
 	}
 	if r, ok := testRunners[name]; ok {
 		ds = append(ds, "tests: "+r.desc)
+	} else if cs := contractsOf[name]; len(cs) > 0 {
+		ds = append(ds, "serves "+strings.Join(cs, ", "))
 	} else if _, ok := actions[name]; ok {
 		ds = append(ds, "actions: "+name+".*")
 	}
@@ -99,17 +107,20 @@ func implements(name string) []string {
 	if _, ok := testRunners[name]; ok {
 		out = append(out, "tests/1")
 	}
-	return out
+	return append(out, contractsOf[name]...)
 }
 
 // install writes one manifest per plugin, each running this binary.
-func install(dir string) error {
+func install(dir string, relative bool) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
+	}
+	if relative {
+		self = "bin/jig-std"
 	}
 	for _, n := range names() {
 		m := host.Manifest{
@@ -123,6 +134,11 @@ func install(dir string) error {
 				m.Importers = map[string]host.ImporterDecl{}
 			}
 			m.Importers[in] = host.ImporterDecl{Files: im.files}
+		}
+		if o, err := overlays.ReadFile("manifests/" + n + ".yaml"); err == nil {
+			if err := yaml.Unmarshal(o, &m); err != nil {
+				return fmt.Errorf("manifests/%s.yaml: %w", n, err)
+			}
 		}
 		b, err := yaml.Marshal(m)
 		if err != nil {

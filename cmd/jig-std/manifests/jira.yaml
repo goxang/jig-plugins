@@ -1,0 +1,12 @@
+config:
+  url: {type: string, description: "https://your-org.atlassian.net"}
+  user: {type: string, description: "Cloud: the account email; leave out for a Server PAT"}
+  token: {type: string, secret: true}
+  project: {type: string, description: "default project key"}
+permissions: {secrets: [JIRA_TOKEN, JIRA_API_TOKEN, ATLASSIAN_TOKEN]}
+views:
+  Jira:
+    slot: tab
+    tabs:
+      Board: {widget: board, source: jira.tracker.board, by: status, card: title, refresh: 60s}
+      Mine: {widget: table, source: jira.tracker.issues, args: {assignee: me}, refresh: 60s}

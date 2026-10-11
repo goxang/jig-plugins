@@ -1,0 +1,7 @@
+name: pack-atlassian
+version: 1.0.0
+description: "Jira and Confluence"
+publisher: goxang
+requires:
+  jira: ^1
+  confluence: ^1

@@ -1,0 +1,3 @@
+detect: {files: [docs, adr, docs/adr]}
+config:
+  dirs: {type: array, items: {type: string}, description: "folders and files to read; default docs, doc, adr, READMEs"}

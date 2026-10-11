@@ -1,0 +1,270 @@
+// Package gitlab is GitLab as scm/1 and tracker/1: merge requests, pipelines, job logs, releases and
+// issues of the project the origin remote (or plugins.gitlab.project) names, over the REST API v4.
+package gitlab
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goxang/jig-plugins/internal/forge"
+	"github.com/goxang/jig-plugins/internal/httpx"
+	"github.com/goxang/jig/sdk"
+)
+
+type GitLab struct{ *forge.Client }
+
+// Open reads plugins.gitlab (url, project, token) with GITLAB_TOKEN as the token's fallback.
+func Open(c *sdk.Ctx) (forge.SCM, error) {
+	host, project, err := forge.Repo(c, "https://gitlab.com")
+	if err != nil {
+		return nil, err
+	}
+	cl := &forge.Client{Host: host, Project: project, Base: host + "/api/v4/projects/" + url.PathEscape(project)}
+	if t := forge.Token(c, "GITLAB_TOKEN"); t != "" {
+		cl.Endpoint = httpx.Endpoint{Headers: map[string]string{"PRIVATE-TOKEN": t}}
+	}
+	return GitLab{cl}, nil
+}
+
+type user struct {
+	Username string `json:"username"`
+}
+
+func iid(s string) string { return strings.TrimLeft(s, "!#") }
+
+func (g GitLab) MRs(ctx context.Context, state, author string) ([]forge.MR, error) {
+	q := url.Values{"per_page": {"50"}, "order_by": {"updated_at"}}
+	if state == "" {
+		state = "opened"
+	}
+	q.Set("state", state)
+	if author != "" {
+		q.Set("author_username", author)
+	}
+	var raw []struct {
+		IID          int       `json:"iid"`
+		Title        string    `json:"title"`
+		Author       user      `json:"author"`
+		State        string    `json:"state"`
+		SourceBranch string    `json:"source_branch"`
+		TargetBranch string    `json:"target_branch"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		WebURL       string    `json:"web_url"`
+	}
+	if err := g.Get(ctx, "/merge_requests?"+q.Encode(), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.MR, 0, len(raw))
+	for _, m := range raw {
+		out = append(out, forge.MR{ID: strconv.Itoa(m.IID), Title: m.Title, Author: m.Author.Username, State: m.State,
+			Source: m.SourceBranch, Target: m.TargetBranch, Updated: m.UpdatedAt, URL: m.WebURL})
+	}
+	return out, nil
+}
+
+func (g GitLab) Files(ctx context.Context, mr string) ([]forge.File, error) {
+	var raw []struct {
+		OldPath     string `json:"old_path"`
+		NewPath     string `json:"new_path"`
+		NewFile     bool   `json:"new_file"`
+		DeletedFile bool   `json:"deleted_file"`
+		RenamedFile bool   `json:"renamed_file"`
+		Diff        string `json:"diff"`
+	}
+	if err := g.Get(ctx, "/merge_requests/"+iid(mr)+"/diffs?per_page=100", &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.File, 0, len(raw))
+	for _, f := range raw {
+		st := "modified"
+		switch {
+		case f.NewFile:
+			st = "added"
+		case f.DeletedFile:
+			st = "deleted"
+		case f.RenamedFile:
+			st = "renamed"
+		}
+		out = append(out, forge.File{Path: f.NewPath, Status: st, Patch: f.Diff, Changed: changed(f.Diff)})
+	}
+	return out, nil
+}
+
+// changed counts a patch's added and removed lines.
+func changed(patch string) int {
+	n := 0
+	for _, l := range strings.Split(patch, "\n") {
+		if (strings.HasPrefix(l, "+") || strings.HasPrefix(l, "-")) && !strings.HasPrefix(l, "+++") && !strings.HasPrefix(l, "---") {
+			n++
+		}
+	}
+	return n
+}
+
+func (g GitLab) Approve(ctx context.Context, mr string) error {
+	return g.Send(ctx, "POST", "/merge_requests/"+iid(mr)+"/approve", nil, nil)
+}
+
+func (g GitLab) Merge(ctx context.Context, mr string) error {
+	return g.Send(ctx, "PUT", "/merge_requests/"+iid(mr)+"/merge", nil, nil)
+}
+
+func (g GitLab) Comment(ctx context.Context, mr, body string) error {
+	return g.Send(ctx, "POST", "/merge_requests/"+iid(mr)+"/notes", map[string]string{"body": body}, nil)
+}
+
+func (g GitLab) Pipelines(ctx context.Context, ref string, limit int) ([]forge.Pipeline, error) {
+	q := url.Values{"per_page": {strconv.Itoa(limit)}}
+	if ref != "" {
+		q.Set("ref", ref)
+	}
+	var raw []struct {
+		ID        int       `json:"id"`
+		Ref       string    `json:"ref"`
+		Status    string    `json:"status"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		WebURL    string    `json:"web_url"`
+	}
+	if err := g.Get(ctx, "/pipelines?"+q.Encode(), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.Pipeline, 0, len(raw))
+	for _, p := range raw {
+		// the list has no duration; created to last update is close enough for a finished pipeline
+		out = append(out, forge.Pipeline{ID: strconv.Itoa(p.ID), Ref: p.Ref, Status: p.Status, Started: p.CreatedAt,
+			Duration: p.UpdatedAt.Sub(p.CreatedAt).Round(time.Second), URL: p.WebURL})
+	}
+	return out, nil
+}
+
+func (g GitLab) Jobs(ctx context.Context, pipeline string) ([]forge.Job, error) {
+	var raw []struct {
+		ID       int     `json:"id"`
+		Name     string  `json:"name"`
+		Stage    string  `json:"stage"`
+		Status   string  `json:"status"`
+		Duration float64 `json:"duration"`
+	}
+	if err := g.Get(ctx, "/pipelines/"+pipeline+"/jobs?per_page=100&include_retried=false", &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.Job, 0, len(raw))
+	for _, j := range raw {
+		out = append(out, forge.Job{ID: strconv.Itoa(j.ID), Name: j.Name, Stage: j.Stage, Status: j.Status, Duration: time.Duration(j.Duration * float64(time.Second))})
+	}
+	return out, nil
+}
+
+func (g GitLab) Log(ctx context.Context, job string) ([]string, bool, error) {
+	var j struct {
+		Status string `json:"status"`
+	}
+	if err := g.Get(ctx, "/jobs/"+job, &j); err != nil {
+		return nil, false, err
+	}
+	ls, err := g.Text(ctx, "/jobs/"+job+"/trace")
+	done := j.Status != "running" && j.Status != "pending" && j.Status != "created"
+	return ls, done, err
+}
+
+func (g GitLab) Retry(ctx context.Context, job string) error {
+	return g.Send(ctx, "POST", "/jobs/"+job+"/retry", nil, nil)
+}
+
+func (g GitLab) Releases(ctx context.Context) ([]forge.Release, error) {
+	var raw []struct {
+		TagName    string    `json:"tag_name"`
+		Name       string    `json:"name"`
+		ReleasedAt time.Time `json:"released_at"`
+		Links      struct {
+			Self string `json:"self"`
+		} `json:"_links"`
+	}
+	if err := g.Get(ctx, "/releases?per_page=30", &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.Release, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, forge.Release{Tag: r.TagName, Name: r.Name, Released: r.ReleasedAt, URL: r.Links.Self})
+	}
+	return out, nil
+}
+
+type issue struct {
+	IID         int       `json:"iid"`
+	Title       string    `json:"title"`
+	State       string    `json:"state"`
+	Description string    `json:"description"`
+	Assignee    *user     `json:"assignee"`
+	Labels      []string  `json:"labels"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	WebURL      string    `json:"web_url"`
+}
+
+func (g GitLab) Issues(ctx context.Context, query, assignee string) ([]forge.Issue, error) {
+	q := url.Values{"per_page": {"50"}, "state": {"opened"}, "order_by": {"updated_at"}}
+	if query != "" {
+		q.Set("search", query)
+	}
+	if assignee != "" {
+		q.Set("assignee_username", assignee)
+	}
+	var raw []issue
+	if err := g.Get(ctx, "/issues?"+q.Encode(), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]forge.Issue, 0, len(raw))
+	for _, i := range raw {
+		is := forge.Issue{Key: "#" + strconv.Itoa(i.IID), Title: i.Title, Status: i.State, Updated: i.UpdatedAt, URL: i.WebURL}
+		if i.Assignee != nil {
+			is.Assignee = i.Assignee.Username
+		}
+		for _, l := range i.Labels {
+			if p, ok := strings.CutPrefix(strings.ToLower(l), "priority::"); ok {
+				is.Priority = p
+			}
+		}
+		out = append(out, is)
+	}
+	return out, nil
+}
+
+func (g GitLab) Issue(ctx context.Context, key string) (*forge.IssueDetail, error) {
+	var i issue
+	if err := g.Get(ctx, "/issues/"+iid(key), &i); err != nil {
+		return nil, err
+	}
+	var notes []struct {
+		Author    user      `json:"author"`
+		CreatedAt time.Time `json:"created_at"`
+		Body      string    `json:"body"`
+		System    bool      `json:"system"`
+	}
+	if err := g.Get(ctx, "/issues/"+iid(key)+"/notes?sort=asc&per_page=100", &notes); err != nil {
+		return nil, err
+	}
+	d := &forge.IssueDetail{Key: "#" + strconv.Itoa(i.IID), Title: i.Title, Status: i.State, Description: i.Description}
+	for _, n := range notes {
+		if !n.System {
+			d.Comments = append(d.Comments, forge.Comment{Author: n.Author.Username, Time: n.CreatedAt, Body: n.Body})
+		}
+	}
+	return d, nil
+}
+
+func (g GitLab) Transition(ctx context.Context, key, status string) error {
+	ev := map[string]string{"closed": "close", "close": "close", "opened": "reopen", "open": "reopen", "reopen": "reopen"}[status]
+	if ev == "" {
+		return fmt.Errorf("a GitLab issue is closed or open, not %q", status)
+	}
+	return g.Send(ctx, "PUT", "/issues/"+iid(key), map[string]string{"state_event": ev}, nil)
+}
+
+func (g GitLab) IssueComment(ctx context.Context, key, body string) error {
+	return g.Send(ctx, "POST", "/issues/"+iid(key)+"/notes", map[string]string{"body": body}, nil)
+}

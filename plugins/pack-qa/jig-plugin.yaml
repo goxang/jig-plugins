@@ -1,0 +1,15 @@
+name: pack-qa
+version: 1.0.0
+description: "test runners and load generators"
+publisher: goxang
+requires:
+  junit: ^1
+  pytest: ^1
+  jest: ^1
+  vitest: ^1
+  hurl: ^1
+  k6: ^1
+  vegeta: ^1
+  ghz: ^1
+  kv: ^1
+  openapi: ^1

@@ -1,0 +1,10 @@
+name: pack-data
+version: 1.0.0
+description: "databases, caches, queues and KV"
+publisher: goxang
+requires:
+  sql: ^1
+  redis: ^1
+  rabbitmq: ^1
+  kafka: ^1
+  consul: ^1

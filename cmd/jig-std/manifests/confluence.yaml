@@ -1,0 +1,6 @@
+config:
+  url: {type: string, description: "https://your-org.atlassian.net/wiki"}
+  user: {type: string}
+  token: {type: string, secret: true}
+  space: {type: string, description: "default space key"}
+permissions: {secrets: [CONFLUENCE_TOKEN, ATLASSIAN_TOKEN]}

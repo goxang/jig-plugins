@@ -1,0 +1,9 @@
+name: pack-cloud-aws
+version: 1.0.0
+description: "AWS, Terraform/OpenTofu, Helm and image registries"
+publisher: goxang
+requires:
+  aws: ^1
+  terraform: ^1
+  helm: ^1
+  registry: ^1

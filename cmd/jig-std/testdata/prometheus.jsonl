@@ -1,4 +1,6 @@
 {"dir":">","msg":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"host":{"name":"jig","version":"1.0.0"},"protocols":["jig/1"]}}}
-{"dir":"<","msg":{"jsonrpc":"2.0","id":1,"result":{"name":"prometheus","version":"dev","protocol":"jig/1","provides":{"sources":{"metrics.instant":{},"metrics.ping":{},"metrics.query-language":{},"metrics.range":{},"metrics.run-query":{}},"implements":["metrics/1"]}}}}
-{"dir":">","msg":{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}}
-{"dir":"<","msg":{"jsonrpc":"2.0","id":2,"result":{}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":1,"result":{"name":"prometheus","version":"dev","protocol":"jig/1","provides":{"sources":{"metrics.instant":{},"metrics.ping":{},"metrics.query-language":{},"metrics.range":{},"metrics.run-query":{}},"importers":{"prometheus-rules":{"files":["rules.yml","alerts.yml","prometheus/rules"]}},"implements":["metrics/1"]},"capabilities":["import"]}}}
+{"dir":">","msg":{"jsonrpc":"2.0","id":2,"method":"import","params":{"importer":"prometheus-rules","files":["rules.yml"],"dir":"."}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":2,"result":{"fragment":{"alerts":[{"crit":1,"name":"HighErrors","query":"sum(rate(errors_total[5m]))","source":"${METRICS:-prometheus}"}]},"watch":["rules.yml"]}}}
+{"dir":">","msg":{"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}}
+{"dir":"<","msg":{"jsonrpc":"2.0","id":3,"result":{}}}
