@@ -264,7 +264,11 @@ func Register(p *sdk.Plugin) {
 			Title    string `json:"title"`
 			Markdown string `json:"markdown"`
 		}
-		return frames.Of([]doc{{ct.ID, ct.Title, Markdown(ct.Body.Storage.Value)}}), nil
+		md := Markdown(ct.Body.Storage.Value)
+		if !strings.HasPrefix(md, "# ") {
+			md = "# " + ct.Title + "\n\n" + md
+		}
+		return frames.Of([]doc{{ct.ID, ct.Title, md}}), nil
 	})
 
 	p.Action("docs.write", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
@@ -318,8 +322,11 @@ func Register(p *sdk.Plugin) {
 		}
 		var rows []treeRow
 		for _, key := range cf.spaces {
-			var sp struct{ Name string }
-			_ = cf.Get(c, "/rest/api/space/"+url.PathEscape(key), &sp)
+			var sp struct {
+				Name     string
+				Homepage struct{ ID string }
+			}
+			_ = cf.Get(c, "/rest/api/space/"+url.PathEscape(key)+"?expand=homepage", &sp)
 			var all []content
 			for start := 0; ; start += 100 {
 				var res struct {
@@ -335,7 +342,7 @@ func Register(p *sdk.Plugin) {
 					break
 				}
 			}
-			rows = append(rows, treeRow{Title: cmp.Or(sp.Name, key) + " (" + key + ")", URL: cf.Base + "/display/" + key})
+			rows = append(rows, treeRow{ID: sp.Homepage.ID, Title: cmp.Or(sp.Name, key) + " (" + key + ")", URL: cf.Base + "/display/" + key})
 			rows = append(rows, cf.tree(all)...)
 		}
 		return frames.Of(rows), nil
@@ -361,6 +368,7 @@ func Register(p *sdk.Plugin) {
 }
 
 type treeRow struct {
+	ID      string    `json:"id"`
 	Title   string    `json:"title"`
 	Updated time.Time `json:"updated"`
 	URL     string    `json:"url"`
@@ -392,7 +400,7 @@ func (cf *Confluence) tree(pages []content) []treeRow {
 			if i == len(kids[parent])-1 {
 				branch, next = "└─ ", "   "
 			}
-			out = append(out, treeRow{Title: rail + branch + p.Title, Updated: p.Version.When, URL: cf.Base + p.Links.WebUI})
+			out = append(out, treeRow{ID: p.ID, Title: rail + branch + p.Title, Updated: p.Version.When, URL: cf.Base + p.Links.WebUI})
 			walk(p.ID, rail+next)
 		}
 	}

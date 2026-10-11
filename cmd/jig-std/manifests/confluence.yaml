@@ -4,9 +4,22 @@ config:
   token: {type: string, secret: true}
   space: {type: string, description: "space keys, comma-separated (PROD, SWIT); new pages go to the first"}
 permissions: {secrets: [CONFLUENCE_TOKEN, ATLASSIAN_TOKEN]}
+# Like the KV screen: the page tree on the left, the selected page on the right (v hides it).
 views:
   Confluence:
     slot: tab
+    modes: [product]
     tabs:
-      Pages: {widget: table, source: confluence.docs.pages, refresh: 5m, columns: {title: {width: 80}}}
-      Recent: {widget: table, source: confluence.docs.search, args: {query: ""}, refresh: 60s}
+      Pages:
+        widget: table
+        source: confluence.docs.pages
+        refresh: 5m
+        columns: {id: {hide: true}, url: {hide: true}, updated: {hide: true}}
+        preview: {source: confluence.docs.read, args: {id: '${row.id}'}, field: markdown, width: 60%}
+      Search:
+        widget: table
+        source: confluence.docs.search
+        args: {query: ""}
+        refresh: 60s
+        columns: {id: {hide: true}, url: {hide: true}, path: {hide: true}}
+        preview: {source: confluence.docs.read, args: {id: '${row.id}'}, field: markdown, width: 60%}

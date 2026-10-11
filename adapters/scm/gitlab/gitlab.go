@@ -120,6 +120,28 @@ func (g GitLab) Comment(ctx context.Context, mr, body string) error {
 	return g.Send(ctx, "POST", "/merge_requests/"+iid(mr)+"/notes", map[string]string{"body": body}, nil)
 }
 
+func (g GitLab) Open(ctx context.Context, source, target, title, body string) (*forge.MR, error) {
+	if target == "" {
+		var p struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		if err := g.Get(ctx, "", &p); err != nil {
+			return nil, err
+		}
+		target = p.DefaultBranch
+	}
+	var m struct {
+		IID    int    `json:"iid"`
+		WebURL string `json:"web_url"`
+	}
+	err := g.Send(ctx, "POST", "/merge_requests", map[string]any{"source_branch": source, "target_branch": target,
+		"title": title, "description": body, "remove_source_branch": true}, &m)
+	if err != nil {
+		return nil, err
+	}
+	return &forge.MR{ID: strconv.Itoa(m.IID), Title: title, Source: source, Target: target, URL: m.WebURL}, nil
+}
+
 func (g GitLab) Pipelines(ctx context.Context, ref string, limit int) ([]forge.Pipeline, error) {
 	q := url.Values{"per_page": {strconv.Itoa(limit)}}
 	if ref != "" {

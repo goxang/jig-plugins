@@ -4,9 +4,52 @@ config:
   token: {type: string, secret: true}
   project: {type: string, description: "default project key"}
 permissions: {secrets: [JIRA_TOKEN, JIRA_API_TOKEN, ATLASSIAN_TOKEN]}
+# The same keys on every issue list: v details, m move, e edit, c comment, a assign, I hand it to the
+# AI, o its merge request.
 views:
   Jira:
     slot: tab
+    modes: [software, product]
     tabs:
-      Board: {widget: board, source: jira.tracker.board, by: status, card: title, refresh: 60s}
-      Mine: {widget: table, source: jira.tracker.issues, args: {assignee: me}, refresh: 60s}
+      Board:
+        widget: board
+        source: jira.tracker.board
+        by: status
+        card: title
+        refresh: 60s
+        preview: {source: jira.tracker.issue, args: {key: '${row.key}'}, field: markdown, width: 45%, hidden: true}
+        actions:
+          - {key: m, name: move, action: jira.tracker.transition, args: {key: '${row.key}', status: '${pick:status}'}}
+          - {key: e, name: edit, action: jira.tracker.update, args: {key: '${row.key}', summary: '${ask:title}'}}
+          - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
+          - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
+          - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
+          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}
+      Mine:
+        widget: table
+        source: jira.tracker.issues
+        args: {assignee: me, query: ""}
+        refresh: 60s
+        columns: {url: {hide: true}}
+        preview: {source: jira.tracker.issue, args: {key: '${row.key}'}, field: markdown, width: 50%}
+        actions:
+          - {key: m, name: move, action: jira.tracker.transition, args: {key: '${row.key}', status: '${pick:status}'}}
+          - {key: e, name: edit, action: jira.tracker.update, args: {key: '${row.key}', summary: '${ask:title}'}}
+          - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
+          - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
+          - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
+          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}
+      Search:
+        widget: table
+        source: jira.tracker.issues
+        args: {query: ""}
+        refresh: 60s
+        columns: {url: {hide: true}}
+        preview: {source: jira.tracker.issue, args: {key: '${row.key}'}, field: markdown, width: 50%}
+        actions:
+          - {key: m, name: move, action: jira.tracker.transition, args: {key: '${row.key}', status: '${pick:status}'}}
+          - {key: e, name: edit, action: jira.tracker.update, args: {key: '${row.key}', summary: '${ask:title}'}}
+          - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
+          - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
+          - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
+          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}

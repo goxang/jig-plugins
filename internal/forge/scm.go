@@ -2,6 +2,8 @@ package forge
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -10,8 +12,10 @@ import (
 )
 
 type MR struct {
-	ID      string    `json:"id"`
-	Title   string    `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Issue is the tracker key (PIN-12) the title or branch names, to jump between the two
+	Issue   string    `json:"issue"`
 	Author  string    `json:"author"`
 	State   string    `json:"state"`
 	Source  string    `json:"source"`
@@ -71,8 +75,43 @@ type IssueDetail struct {
 	Key         string    `json:"key"`
 	Title       string    `json:"title"`
 	Status      string    `json:"status"`
+	Assignee    string    `json:"assignee"`
 	Description string    `json:"description"`
 	Comments    []Comment `json:"comments"`
+	URL         string    `json:"url"`
+	// Markdown is the whole issue as one page, for a preview pane
+	Markdown string `json:"markdown"`
+}
+
+// Render fills Markdown from the other fields.
+func (d *IssueDetail) Render() *IssueDetail {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s %s\n\n**%s**", d.Key, d.Title, d.Status)
+	if d.Assignee != "" {
+		fmt.Fprintf(&b, " · %s", d.Assignee)
+	}
+	if d.URL != "" {
+		fmt.Fprintf(&b, " · %s", d.URL)
+	}
+	b.WriteString("\n\n" + strings.TrimSpace(d.Description) + "\n")
+	if len(d.Comments) > 0 {
+		b.WriteString("\n## Comments\n")
+		for _, c := range d.Comments {
+			fmt.Fprintf(&b, "\n**%s** %s\n\n%s\n", c.Author, c.Time.Format("2006-01-02 15:04"), strings.TrimSpace(c.Body))
+		}
+	}
+	d.Markdown = b.String()
+	return d
+}
+
+var issueKey = regexp.MustCompile(`\b[A-Z][A-Z0-9]+-\d+\b`)
+
+// IssueOf is the first tracker key in the MR's title, else its source branch (pin-12-fix reads PIN-12).
+func IssueOf(title, branch string) string {
+	if k := issueKey.FindString(title); k != "" {
+		return k
+	}
+	return issueKey.FindString(strings.ToUpper(branch))
 }
 
 // SCM is a hosted forge as scm/1 and tracker/1 see it; gitlab and github implement it.
@@ -82,6 +121,8 @@ type SCM interface {
 	Approve(ctx context.Context, mr string) error
 	Merge(ctx context.Context, mr string) error
 	Comment(ctx context.Context, mr, body string) error
+	// Open opens a merge request from source into target (the default branch when empty).
+	Open(ctx context.Context, source, target, title, body string) (*MR, error)
 	Pipelines(ctx context.Context, ref string, limit int) ([]Pipeline, error)
 	Jobs(ctx context.Context, pipeline string) ([]Job, error)
 	// Log is a job's output so far and whether the job has finished.
@@ -112,8 +153,28 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 			return nil, err
 		}
 		rows, err := f.MRs(c, in.State, in.Author)
+		for i := range rows {
+			rows[i].Issue = IssueOf(rows[i].Title, rows[i].Source)
+		}
 		return frames.Of(rows), err
 	}, sdk.Cache("30s"), sdk.Describe("merge requests (pull requests)"))
+
+	p.Action("scm.open", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Source string `json:"source" jig:"required" desc:"the branch to merge (already pushed)"`
+		Target string `json:"target" desc:"default: the default branch"`
+		Title  string `json:"title" jig:"required" desc:"lead with the issue key: PIN-12 fix the parser"`
+		Body   string `json:"body" desc:"description; link the issue"`
+	}) (*sdk.Result, error) {
+		f, err := open(c)
+		if err != nil {
+			return nil, err
+		}
+		mr, err := f.Open(c, in.Source, in.Target, in.Title, in.Body)
+		if err != nil {
+			return nil, err
+		}
+		return &sdk.Result{Message: "opened " + mr.URL, Outputs: sdk.Args{"id": mr.ID, "url": mr.URL}}, nil
+	}, sdk.Describe("open a merge request (pull request) for a pushed branch"))
 
 	p.Source("scm.files", func(c *sdk.Ctx, in mrArg) (*sdk.Frame, error) {
 		f, err := open(c)
@@ -272,7 +333,7 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 		if err != nil {
 			return nil, err
 		}
-		return frames.Of([]IssueDetail{*d}), nil
+		return frames.Of([]IssueDetail{*d.Render()}), nil
 	})
 
 	p.Action("tracker.transition", sdk.EffectWrite, func(c *sdk.Ctx, in struct {

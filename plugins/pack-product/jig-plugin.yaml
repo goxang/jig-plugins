@@ -1,11 +1,12 @@
 name: pack-product
-version: 1.0.0
+version: 1.1.0
 description: "product work: Jira, Confluence and the agents that join them to MRs (add pack-gitlab or pack-github)"
 publisher: goxang
 requires:
   git: ^1
   jira: ^1
   confluence: ^1
+skills: [skills/issue-flow]
 # Every write these agents make waits in `jig inbox` for a person.
 agents:
   spec-to-backlog:

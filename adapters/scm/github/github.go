@@ -106,6 +106,26 @@ func (g GitHub) Comment(ctx context.Context, mr, body string) error {
 	return g.IssueComment(ctx, mr, body)
 }
 
+func (g GitHub) Open(ctx context.Context, source, target, title, body string) (*forge.MR, error) {
+	if target == "" {
+		var r struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		if err := g.Get(ctx, "", &r); err != nil {
+			return nil, err
+		}
+		target = r.DefaultBranch
+	}
+	var pr struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := g.Send(ctx, "POST", "/pulls", map[string]string{"head": source, "base": target, "title": title, "body": body}, &pr); err != nil {
+		return nil, err
+	}
+	return &forge.MR{ID: strconv.Itoa(pr.Number), Title: title, Source: source, Target: target, URL: pr.HTMLURL}, nil
+}
+
 // status speaks GitLab's words, so one pipelines view reads the same for both forges.
 func status(status, conclusion string) string {
 	if status == "completed" && conclusion != "" {

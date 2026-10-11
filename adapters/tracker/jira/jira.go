@@ -244,14 +244,17 @@ func Register(p *sdk.Plugin) {
 			return nil, err
 		}
 		var i rawIssue
-		if err := j.Get(c, "/rest/api/2/issue/"+url.PathEscape(in.Key)+"?fields=summary,status,description,comment", &i); err != nil {
+		if err := j.Get(c, "/rest/api/2/issue/"+url.PathEscape(in.Key)+"?fields=summary,status,assignee,description,comment", &i); err != nil {
 			return nil, err
 		}
-		d := forge.IssueDetail{Key: i.Key, Title: i.Fields.Summary, Status: i.Fields.Status.Name, Description: text(i.Fields.Description)}
+		d := forge.IssueDetail{Key: i.Key, Title: i.Fields.Summary, Status: i.Fields.Status.Name, Description: text(i.Fields.Description), URL: j.Base + "/browse/" + i.Key}
+		if i.Fields.Assignee != nil {
+			d.Assignee = i.Fields.Assignee.DisplayName
+		}
 		for _, cm := range i.Fields.Comment.Comments {
 			d.Comments = append(d.Comments, forge.Comment{Author: cm.Author.DisplayName, Time: jiraTime(cm.Created), Body: text(cm.Body)})
 		}
-		return frames.Of([]forge.IssueDetail{d}), nil
+		return frames.Of([]forge.IssueDetail{*d.Render()}), nil
 	})
 
 	p.Action("tracker.transition", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
@@ -276,11 +279,48 @@ func Register(p *sdk.Plugin) {
 		return done("commented on "+in.Key, j.Send(c, "POST", "/rest/api/2/issue/"+in.Key+"/comment", map[string]string{"body": in.Body}, nil))
 	})
 
+	p.Action("tracker.update", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Key         string `json:"key" jig:"required"`
+		Summary     string `json:"summary" desc:"new title; empty keeps it"`
+		Description string `json:"description" desc:"new description; empty keeps it"`
+		Append      string `json:"append" desc:"a line added under the description (a branch, an MR link)"`
+	}) (*sdk.Result, error) {
+		j, err := open(c)
+		if err != nil {
+			return nil, err
+		}
+		set := map[string]any{}
+		if in.Summary != "" {
+			set["summary"] = in.Summary
+		}
+		desc := in.Description
+		if in.Append != "" {
+			if desc == "" {
+				var i rawIssue
+				if err := j.Get(c, "/rest/api/2/issue/"+url.PathEscape(in.Key)+"?fields=description", &i); err != nil {
+					return nil, err
+				}
+				desc = text(i.Fields.Description)
+			}
+			if !strings.Contains(desc, in.Append) {
+				desc = strings.TrimRight(desc, "\n") + "\n\n" + in.Append
+			}
+		}
+		if desc != "" {
+			set["description"] = desc
+		}
+		if len(set) == 0 {
+			return nil, fmt.Errorf("nothing to change: give summary, description or append")
+		}
+		return done("updated "+in.Key, j.Send(c, "PUT", "/rest/api/2/issue/"+url.PathEscape(in.Key), map[string]any{"fields": set}, nil))
+	})
+
 	p.Action("tracker.create", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
 		Summary     string `json:"summary" jig:"required"`
 		Description string `json:"description"`
 		Project     string `json:"project" desc:"default plugins.jira.project"`
 		Type        string `json:"type" desc:"issue type (default Task)"`
+		Assignee    string `json:"assignee" desc:"a name or email, or me"`
 	}) (*sdk.Result, error) {
 		j, err := open(c)
 		if err != nil {
@@ -304,7 +344,19 @@ func Register(p *sdk.Plugin) {
 		if err != nil {
 			return nil, err
 		}
-		return &sdk.Result{Message: "created " + res.Key, Outputs: sdk.Args{"key": res.Key, "url": j.Base + "/browse/" + res.Key}}, nil
+		msg := "created " + res.Key
+		if in.Assignee != "" {
+			u, err := j.user(c, in.Assignee)
+			if err == nil {
+				err = j.Send(c, "PUT", "/rest/api/2/issue/"+res.Key+"/assignee", u, nil)
+			}
+			if err != nil {
+				msg += ", not assigned: " + err.Error()
+			} else {
+				msg += " for " + in.Assignee
+			}
+		}
+		return &sdk.Result{Message: msg, Outputs: sdk.Args{"key": res.Key, "url": j.Base + "/browse/" + res.Key}}, nil
 	})
 
 	p.Action("tracker.assign", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
