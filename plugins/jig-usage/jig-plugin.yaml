@@ -1,0 +1,13 @@
+name: jig-usage
+version: 1.0.0
+description: ":usage — CPU and memory of jig and each plugin it runs, refreshed every 2 seconds"
+publisher: goxang
+permissions: {exec: [ps], env: ["*"]}
+sources:
+  usage: {run: python3 "$JIG_PLUGIN_DIR/usage.py", format: ndjson, cache: 1s}
+views:
+  Usage:
+    slot: {command: usage}
+    widget: table
+    source: jig-usage.usage
+    refresh: 2s

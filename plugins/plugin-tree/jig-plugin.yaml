@@ -1,0 +1,20 @@
+name: plugin-tree
+version: 1.0.0
+description: ":plugintree — the plugins as a dependency tree, how each talks to jig (RPC, script, yaml, MCP) and what it uses"
+publisher: goxang
+permissions: {exec: [jig, ps], fs: ["/"], env: ["*"]}
+sources:
+  tree: {run: python3 "$JIG_PLUGIN_DIR/tree.py" tree, format: ndjson, cache: 2s}
+  edges: {run: python3 "$JIG_PLUGIN_DIR/tree.py" edges, format: ndjson, cache: 2s}
+views:
+  Plugin tree:
+    slot: {command: plugintree}
+    tabs:
+      Tree:
+        widget: table
+        source: plugin-tree.tree
+        fold: parent
+        refresh: 3s
+        columns: {id: {hide: true}, parent: {hide: true}, dir: {hide: true}, cpu: {title: cpu %}}
+      Graph: {widget: graph, source: plugin-tree.edges, center: jig, refresh: 10s}
+      Edges: {widget: table, source: plugin-tree.edges, refresh: 10s}
