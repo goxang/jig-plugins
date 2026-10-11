@@ -16,9 +16,12 @@ type MR struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// Issue is the tracker key (PIN-12) the title or branch names, to jump between the two
-	Issue   string    `json:"issue"`
-	Author  string    `json:"author"`
-	State   string    `json:"state"`
+	Issue  string `json:"issue"`
+	Author string `json:"author"`
+	State  string `json:"state"`
+	// Merge says whether it can merge: draft, conflicts, blocked by threads or checks
+	Merge   string    `json:"merge"`
+	Notes   int       `json:"notes"`
 	Source  string    `json:"source"`
 	Target  string    `json:"target"`
 	Updated time.Time `json:"updated"`
@@ -62,6 +65,7 @@ type Issue struct {
 	Status   string    `json:"status"`
 	Assignee string    `json:"assignee"`
 	Priority string    `json:"priority"`
+	Type     string    `json:"type"`
 	Updated  time.Time `json:"updated"`
 	URL      string    `json:"url"`
 }
@@ -117,7 +121,11 @@ func IssueOf(title, branch string) string {
 
 // SCM is a hosted forge as scm/1 and tracker/1 see it; gitlab and github implement it.
 type SCM interface {
-	MRs(ctx context.Context, state, author string) ([]MR, error)
+	// MRs lists merge requests: author "me" keeps those you opened, "review" those you review; query matches title and branch.
+	MRs(ctx context.Context, state, author, query string) ([]MR, error)
+	// MR is one merge request as a page: description, approvals, discussions and the files it changes.
+	MR(ctx context.Context, mr string) (string, error)
+	Rebase(ctx context.Context, mr string) error
 	Files(ctx context.Context, mr string) ([]File, error)
 	Approve(ctx context.Context, mr string) error
 	Merge(ctx context.Context, mr string) error
@@ -148,13 +156,14 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 	}
 	p.Source("scm.mrs", func(c *sdk.Ctx, in struct {
 		State  string `json:"state" desc:"opened (default), merged, closed or all"`
-		Author string `json:"author"`
+		Author string `json:"author" desc:"a username, me (opened by you) or review (waiting for you)"`
+		Query  string `json:"query" desc:"words of the title, a branch or an issue key"`
 	}) (*sdk.Frame, error) {
 		f, err := open(c)
 		if err != nil {
 			return nil, err
 		}
-		rows, err := f.MRs(c, in.State, in.Author)
+		rows, err := f.MRs(c, in.State, in.Author, in.Query)
 		for i := range rows {
 			rows[i].Issue = IssueOf(rows[i].Title, rows[i].Source)
 		}
@@ -187,6 +196,21 @@ func RegisterSCM(p *sdk.Plugin, open func(*sdk.Ctx) (SCM, error), affected Affec
 		}
 		return &sdk.Result{Message: "opened " + mr.URL, Outputs: sdk.Args{"id": mr.ID, "url": mr.URL}}, nil
 	}, sdk.Describe("open a merge request (pull request) for a pushed branch"))
+
+	p.Source("scm.mr", func(c *sdk.Ctx, in mrArg) (*sdk.Frame, error) {
+		f, err := open(c)
+		if err != nil {
+			return nil, err
+		}
+		md, err := f.MR(c, in.MR)
+		return frames.Of([]struct {
+			Markdown string `json:"markdown"`
+		}{{md}}), err
+	}, sdk.Describe("a merge request as a page: description, approvals, open threads, files"))
+
+	p.Action("scm.rebase", sdk.EffectWrite, func(c *sdk.Ctx, in mrArg) (*sdk.Result, error) {
+		return do(c, open, "rebasing "+in.MR, func(f SCM) error { return f.Rebase(c, in.MR) })
+	})
 
 	p.Source("scm.files", func(c *sdk.Ctx, in mrArg) (*sdk.Frame, error) {
 		f, err := open(c)

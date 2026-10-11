@@ -326,15 +326,21 @@ func Register(p *sdk.Plugin, export Export) {
 		if in.Create {
 			return run(c, "switch", "-c", in.Branch)
 		}
-		if _, err := Git(c, "switch", in.Branch); err == nil {
-			return &sdk.Result{Message: "on " + in.Branch}, nil
+		if _, err := Git(c, "rev-parse", "--verify", "-q", "refs/tags/"+in.Branch); err == nil {
+			return run(c, "switch", "--detach", "refs/tags/"+in.Branch)
 		}
-		// not local yet: a remote branch or a release tag
-		Git(c, "fetch", "--tags", "--quiet", "origin")
-		if _, err := Git(c, "switch", in.Branch); err == nil {
-			return &sdk.Result{Message: "on " + in.Branch}, nil
+		_, err := Git(c, "switch", in.Branch)
+		if err != nil && !strings.Contains(err.Error(), "overwritten") {
+			// not local yet: a remote branch or a release tag
+			Git(c, "fetch", "--tags", "--quiet", "origin")
+			if _, err = Git(c, "switch", in.Branch); err != nil && !strings.Contains(err.Error(), "overwritten") {
+				return run(c, "switch", "--detach", in.Branch)
+			}
 		}
-		return run(c, "switch", "--detach", in.Branch)
+		if err != nil {
+			return nil, fmt.Errorf("uncommitted changes would be overwritten: commit or stash them first (Changes tab)")
+		}
+		return &sdk.Result{Message: "on " + in.Branch}, nil
 	}, sdk.Describe("switch to a branch, a remote branch or a release tag (detached)"))
 
 	p.Action("vcs.commit", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
@@ -407,6 +413,79 @@ func Register(p *sdk.Plugin, export Export) {
 		}
 		return run(c, "stash", "push", "--include-untracked", "-m", cmp.Or(in.Message, "jig"))
 	})
+
+	p.Action("vcs.fetch", sdk.EffectWrite, func(c *sdk.Ctx, _ sdk.Empty) (*sdk.Result, error) {
+		return run(c, "fetch", "--all", "--tags", "--prune")
+	}, sdk.Describe("fetch every remote, with its tags, dropping branches deleted there"))
+
+	p.Action("vcs.merge", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Branch string `json:"branch" jig:"required"`
+	}) (*sdk.Result, error) {
+		return run(c, "merge", "--no-edit", in.Branch)
+	}, sdk.Describe("merge a branch into the current one"))
+
+	p.Action("vcs.rebase", sdk.EffectDanger, func(c *sdk.Ctx, in struct {
+		Onto string `json:"onto" jig:"required"`
+	}) (*sdk.Result, error) {
+		return run(c, "rebase", in.Onto)
+	}, sdk.Describe("replay the current branch on another (it rewrites the branch's commits)"))
+
+	p.Action("vcs.branch-delete", sdk.EffectDanger, func(c *sdk.Ctx, in struct {
+		Branch string `json:"branch" jig:"required"`
+		Force  bool   `json:"force" desc:"also when it is not merged"`
+	}) (*sdk.Result, error) {
+		if strings.HasPrefix(in.Branch, "origin/") {
+			return run(c, "push", "origin", "--delete", strings.TrimPrefix(in.Branch, "origin/"))
+		}
+		return run(c, "branch", map[bool]string{true: "-D", false: "-d"}[in.Force], in.Branch)
+	}, sdk.Describe("delete a local branch, or a remote one named origin/x"))
+
+	p.Action("vcs.cherry-pick", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Commit string `json:"commit" jig:"required"`
+	}) (*sdk.Result, error) {
+		return run(c, "cherry-pick", in.Commit)
+	}, sdk.Describe("apply a commit onto the current branch"))
+
+	p.Action("vcs.revert", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Commit string `json:"commit" jig:"required"`
+	}) (*sdk.Result, error) {
+		return run(c, "revert", "--no-edit", in.Commit)
+	}, sdk.Describe("a new commit that undoes one"))
+
+	p.Action("vcs.tag", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Name string `json:"name" jig:"required"`
+		Ref  string `json:"ref" desc:"default HEAD"`
+		Push bool   `json:"push"`
+	}) (*sdk.Result, error) {
+		if _, err := run(c, "tag", in.Name, cmp.Or(in.Ref, "HEAD")); err != nil {
+			return nil, err
+		}
+		if in.Push {
+			return run(c, "push", "origin", in.Name)
+		}
+		return &sdk.Result{Message: "tagged " + in.Name}, nil
+	}, sdk.Describe("tag a commit, and push the tag on request"))
+
+	p.Action("vcs.stash-drop", sdk.EffectDanger, func(c *sdk.Ctx, in struct {
+		Ref string `json:"ref" jig:"required" desc:"stash@{0}"`
+	}) (*sdk.Result, error) {
+		return run(c, "stash", "drop", in.Ref)
+	}, sdk.Describe("throw a stash away"))
+
+	p.Action("vcs.stash-apply", sdk.EffectWrite, func(c *sdk.Ctx, in struct {
+		Ref string `json:"ref" jig:"required"`
+	}) (*sdk.Result, error) {
+		return run(c, "stash", "apply", in.Ref)
+	}, sdk.Describe("apply a stash and keep it"))
+
+	p.Action("vcs.amend", sdk.EffectDanger, func(c *sdk.Ctx, in struct {
+		Message string `json:"message" desc:"a new message; empty keeps it"`
+	}) (*sdk.Result, error) {
+		if in.Message == "" {
+			return run(c, "commit", "--amend", "--no-edit", "--all")
+		}
+		return run(c, "commit", "--amend", "-m", in.Message, "--all")
+	}, sdk.Describe("fold the changes into the last commit (it rewrites that commit)"))
 
 	p.Action("vcs.export", sdk.EffectRead, func(c *sdk.Ctx, in struct {
 		Ref string `json:"ref" jig:"required"`

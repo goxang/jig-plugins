@@ -1,22 +1,61 @@
 detect: {files: [.git]}
-# A row per changed file, its diff beside it. / filters the paths; enter on no match searches the files' content. o opens a merge request on whichever forge plugin is in use.
+# Changes: files with their diff (space marks several, s u d then act on all of them). Log, Branches and
+# Stashes carry the rest of daily git. / filters; on Changes, enter with no match searches file content.
 views:
   Changes:
     slot: tab
-    widget: table
-    title: Changes
-    source: git.vcs.status
-    args: {query: ''}
-    refresh: 5s
-    preview: {widget: diff, source: git.vcs.diff, args: {path: '${row.path}', ref: HEAD}, width: 60%}
-    actions:
-      - {key: s, name: stage, action: git.vcs.stage, args: {path: '${row.path}'}}
-      - {key: u, name: unstage, action: git.vcs.stage, args: {path: '${row.path}', unstage: true}}
-      - {key: A, name: stage all, action: git.vcs.stage, args: {}}
-      - {key: d, name: discard, action: git.vcs.discard, args: {path: '${row.path}'}}
-      - {key: c, name: commit, action: git.vcs.commit, args: {message: '${ask}'}}
-      - {key: P, name: push, action: git.vcs.push, args: {}}
-      - {key: p, name: pull, action: git.vcs.pull, args: {}}
-      - {key: b, name: branch, action: git.vcs.checkout, args: {branch: '${ask}'}}
-      - {key: o, name: open MR, action: gitlab.scm.open, args: {title: '${ask}'}}
-      - {key: o, name: open PR, action: github.scm.open, args: {title: '${ask}'}}
+    tabs:
+      Files:
+        widget: table
+        source: git.vcs.status
+        args: {query: ''}
+        mark: path
+        refresh: 5s
+        preview: {widget: diff, source: git.vcs.diff, args: {path: '${row.path}', ref: HEAD}, width: 60%}
+        actions:
+          - {key: s, name: stage, action: git.vcs.stage, args: {path: '${row.path}'}}
+          - {key: u, name: unstage, action: git.vcs.stage, args: {path: '${row.path}', unstage: true}}
+          - {key: a, name: stage all, action: git.vcs.stage, args: {}}
+          - {key: d, name: discard, action: git.vcs.discard, args: {path: '${row.path}'}}
+          - {key: c, name: commit, action: git.vcs.commit, args: {message: '${ask}'}}
+          - {key: C, name: amend, action: git.vcs.amend, args: {message: ''}}
+          - {key: z, name: stash, action: git.vcs.stash, args: {message: '${ask}'}}
+          - {key: P, name: push, action: git.vcs.push, args: {}}
+          - {key: p, name: pull, action: git.vcs.pull, args: {}}
+          - {key: f, name: fetch, action: git.vcs.fetch, args: {}}
+          - {key: n, name: new branch, action: git.vcs.checkout, args: {branch: '${ask}', create: true}}
+          - {key: b, name: switch branch, action: git.vcs.checkout, args: {branch: '${ask}'}}
+          - {key: o, name: open MR, action: gitlab.scm.open, args: {title: '${ask}'}}
+          - {key: o, name: open PR, action: github.scm.open, args: {title: '${ask}'}}
+      Log:
+        widget: table
+        source: git.vcs.log
+        args: {limit: 300}
+        refresh: 30s
+        columns: {graph: {hide: true}}
+        preview: {widget: diff, source: git.vcs.diff, args: {ref: '${row.commit}^!'}, width: 60%}
+        actions:
+          - {key: o, name: checkout, action: git.vcs.checkout, args: {branch: '${row.commit}'}}
+          - {key: x, name: cherry-pick, action: git.vcs.cherry-pick, args: {commit: '${row.commit}'}}
+          - {key: R, name: revert, action: git.vcs.revert, args: {commit: '${row.commit}'}}
+          - {key: t, name: tag, action: git.vcs.tag, args: {name: '${ask}', ref: '${row.commit}'}}
+          - {key: n, name: branch here, action: git.vcs.checkout, args: {branch: '${ask}', create: true}}
+      Branches:
+        widget: table
+        source: git.vcs.branches
+        refresh: 30s
+        actions:
+          - {key: o, name: checkout, action: git.vcs.checkout, args: {branch: '${row.name}'}}
+          - {key: m, name: merge into current, action: git.vcs.merge, args: {branch: '${row.name}'}}
+          - {key: B, name: rebase current on it, action: git.vcs.rebase, args: {onto: '${row.name}'}}
+          - {key: X, name: delete, action: git.vcs.branch-delete, args: {branch: '${row.name}'}}
+          - {key: f, name: fetch, action: git.vcs.fetch, args: {}}
+      Stashes:
+        widget: table
+        source: git.vcs.stashes
+        refresh: 15s
+        preview: {widget: diff, source: git.vcs.diff, args: {ref: '${row.ref}^..${row.ref}'}, width: 60%}
+        actions:
+          - {key: p, name: pop, action: git.vcs.stash, args: {pop: '${row.ref}'}}
+          - {key: a, name: apply, action: git.vcs.stash-apply, args: {ref: '${row.ref}'}}
+          - {key: X, name: drop, action: git.vcs.stash-drop, args: {ref: '${row.ref}'}}

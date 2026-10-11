@@ -19,7 +19,7 @@ func TestGitHub(t *testing.T) {
 	g := GitHub{&forge.Client{Base: srv.URL + r, Project: "o/r"}}
 	ctx := context.Background()
 
-	mrs, err := g.MRs(ctx, "", "")
+	mrs, err := g.MRs(ctx, "", "", "")
 	if err != nil || len(mrs) != 1 || mrs[0].Author != "bo" || mrs[0].Target != "main" {
 		t.Fatalf("mrs %+v %v", mrs, err)
 	}

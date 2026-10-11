@@ -16,15 +16,16 @@ views:
         source: jira.tracker.board
         by: status
         card: title
+        meta: [type, assignee]
         refresh: 60s
-        preview: {source: jira.tracker.issue, args: {key: '${row.key}'}, field: markdown, width: 45%, hidden: true}
+        preview: {source: jira.tracker.issue, args: {key: '${row.key}'}, field: markdown, width: 45%}
         actions:
           - {key: m, name: move, action: jira.tracker.transition, args: {key: '${row.key}', status: '${pick:status}'}}
           - {key: e, name: edit, action: jira.tracker.update, args: {key: '${row.key}', summary: '${ask:title}'}}
           - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
           - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
           - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
-          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}
+          - {key: o, name: its MR (GitLab), command: 'open GitLab ${row.key}'}
       Mine:
         widget: table
         source: jira.tracker.issues
@@ -38,7 +39,7 @@ views:
           - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
           - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
           - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
-          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}
+          - {key: o, name: its MR (GitLab), command: 'open GitLab ${row.key}'}
       Search:
         widget: table
         source: jira.tracker.issues
@@ -52,4 +53,4 @@ views:
           - {key: c, name: comment, action: jira.tracker.comment, args: {key: '${row.key}', body: '${ask}'}}
           - {key: a, name: assign, action: jira.tracker.assign, args: {key: '${row.key}', assignee: '${ask:assignee}'}}
           - {key: I, name: AI does it, ai: 'Do ${row.key} "${row.title}" (skill issue-flow: branch, implement, push, open the MR).'}
-          - {key: o, name: its MR, command: 'open GitLab ${row.key}'}
+          - {key: o, name: its MR (GitLab), command: 'open GitLab ${row.key}'}

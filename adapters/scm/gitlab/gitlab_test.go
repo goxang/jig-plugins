@@ -21,7 +21,7 @@ func TestGitLab(t *testing.T) {
 	g := GitLab{&forge.Client{Base: srv.URL + p, Project: "g/p"}}
 	ctx := context.Background()
 
-	mrs, err := g.MRs(ctx, "", "")
+	mrs, err := g.MRs(ctx, "", "", "")
 	if err != nil || len(mrs) != 1 || mrs[0].ID != "7" || mrs[0].Author != "ann" {
 		t.Fatalf("mrs %+v %v", mrs, err)
 	}

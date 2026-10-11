@@ -43,7 +43,28 @@ type user struct {
 
 func num(s string) string { return strings.TrimLeft(s, "#!") }
 
-func (g GitHub) MRs(ctx context.Context, state, author string) ([]forge.MR, error) {
+func (g GitHub) MR(ctx context.Context, mr string) (string, error) {
+	var p struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		User   user   `json:"user"`
+		Head   struct{ Ref string }
+		Base   struct{ Ref string }
+		URL    string `json:"html_url"`
+	}
+	if err := g.Get(ctx, "/pulls/"+num(mr), &p); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("# #%d %s\n\n**%s** · %s → %s · %s\n\n%s\n\n%s\n", p.Number, p.Title, p.State, p.Head.Ref, p.Base.Ref, p.User.Login, strings.TrimSpace(p.Body), p.URL), nil
+}
+
+func (g GitHub) Rebase(context.Context, string) error {
+	return fmt.Errorf("GitHub updates a pull request's branch from its page")
+}
+
+func (g GitHub) MRs(ctx context.Context, state, author, query string) ([]forge.MR, error) {
 	ghState := map[string]string{"": "open", "opened": "open", "open": "open", "merged": "closed", "closed": "closed", "all": "all"}[state]
 	if ghState == "" {
 		return nil, fmt.Errorf("state is opened, merged, closed or all")
@@ -68,7 +89,7 @@ func (g GitHub) MRs(ctx context.Context, state, author string) ([]forge.MR, erro
 		if p.MergedAt != nil {
 			st = "merged"
 		}
-		if state == "merged" && st != "merged" || state == "closed" && st != "closed" || author != "" && p.User.Login != author {
+		if state == "merged" && st != "merged" || state == "closed" && st != "closed" || author != "" && author != "me" && author != "review" && p.User.Login != author || query != "" && !strings.Contains(strings.ToLower(p.Title+" "+p.Head.Ref), strings.ToLower(query)) {
 			continue
 		}
 		out = append(out, forge.MR{ID: strconv.Itoa(p.Number), Title: p.Title, Author: p.User.Login, State: st,

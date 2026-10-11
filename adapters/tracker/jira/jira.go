@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,8 +43,12 @@ type fields struct {
 	Summary     string `json:"summary"`
 	Description any    `json:"description"`
 	Status      struct {
+		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"status"`
+	IssueType *struct {
+		Name string `json:"name"`
+	} `json:"issuetype"`
 	Assignee *struct {
 		DisplayName string `json:"displayName"`
 	} `json:"assignee"`
@@ -81,6 +86,9 @@ func (j *Jira) row(i rawIssue) forge.Issue {
 	if i.Fields.Priority != nil {
 		is.Priority = i.Fields.Priority.Name
 	}
+	if i.Fields.IssueType != nil {
+		is.Type = i.Fields.IssueType.Name
+	}
 	return is
 }
 
@@ -116,7 +124,7 @@ func JQL(query, assignee, project string) string {
 }
 
 func (j *Jira) Search(ctx context.Context, jql string) ([]forge.Issue, error) {
-	q := url.Values{"jql": {jql}, "maxResults": {"100"}, "fields": {"summary,status,assignee,priority,updated"}}
+	q := url.Values{"jql": {jql}, "maxResults": {"100"}, "fields": {"summary,status,assignee,priority,updated,issuetype"}}
 	var res struct{ Issues []rawIssue }
 	if err := j.Get(ctx, "/rest/api/2/search?"+q.Encode(), &res); err != nil {
 		return nil, err
@@ -469,9 +477,55 @@ func Register(p *sdk.Plugin) {
 		if j.project != "" {
 			jql += " AND project = " + j.project
 		}
-		rows, err := j.Search(c, jql+" ORDER BY rank")
-		return frames.Of(rows), err
+		q := url.Values{"jql": {jql + " ORDER BY rank"}, "maxResults": {"200"}, "fields": {"summary,status,assignee,priority,updated,issuetype"}}
+		var res struct{ Issues []rawIssue }
+		if err := j.Get(c, "/rest/api/2/search?"+q.Encode(), &res); err != nil {
+			return nil, err
+		}
+		pos := j.columnOrder(c)
+		sort.SliceStable(res.Issues, func(a, b int) bool {
+			at := func(i int) int {
+				if p, ok := pos[res.Issues[i].Fields.Status.ID]; ok {
+					return p
+				}
+				return len(pos)
+			}
+			return at(a) < at(b)
+		})
+		rows := make([]forge.Issue, 0, len(res.Issues))
+		for _, i := range res.Issues {
+			rows = append(rows, j.row(i))
+		}
+		return frames.Of(rows), nil
 	}, sdk.Cache("30s"), sdk.Describe("the open sprint's issues, for the board widget (by: status)"))
+}
+
+// columnOrder is each status id's place in the project's first board, left to right, so the board
+// widget lists its columns as Jira does; empty when the board cannot be read.
+func (j *Jira) columnOrder(ctx context.Context) map[string]int {
+	pos := map[string]int{}
+	var bs struct{ Values []struct{ ID int } }
+	q := "/rest/agile/1.0/board?maxResults=1"
+	if j.project != "" {
+		q += "&projectKeyOrId=" + url.QueryEscape(j.project)
+	}
+	if j.Get(ctx, q, &bs) != nil || len(bs.Values) == 0 {
+		return pos
+	}
+	var cfg struct {
+		ColumnConfig struct {
+			Columns []struct{ Statuses []struct{ ID string } }
+		}
+	}
+	if j.Get(ctx, "/rest/agile/1.0/board/"+strconv.Itoa(bs.Values[0].ID)+"/configuration", &cfg) != nil {
+		return pos
+	}
+	for n, col := range cfg.ColumnConfig.Columns {
+		for _, st := range col.Statuses {
+			pos[st.ID] = n
+		}
+	}
+	return pos
 }
 
 func done(msg string, err error) (*sdk.Result, error) {

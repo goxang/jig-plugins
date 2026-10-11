@@ -8,7 +8,7 @@ views:
   GitHub:
     slot: tab
     tabs:
-      MRs: {widget: table, source: github.scm.mrs, refresh: 30s, actions: [{key: A, name: approve, action: github.scm.approve, args: {mr: '${row.id}'}}]}
+      MRs: {widget: table, source: github.scm.mrs, refresh: 30s, actions: [{key: a, name: approve, action: github.scm.approve, args: {mr: '${row.id}'}}]}
       Pipelines: {widget: table, source: github.scm.pipelines, refresh: 15s}
       Releases:
         widget: table

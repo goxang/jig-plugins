@@ -3,9 +3,11 @@
 package gitlab
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -39,14 +41,27 @@ type user struct {
 
 func iid(s string) string { return strings.TrimLeft(s, "!#") }
 
-func (g GitLab) MRs(ctx context.Context, state, author string) ([]forge.MR, error) {
+func (g GitLab) MRs(ctx context.Context, state, author, query string) ([]forge.MR, error) {
 	q := url.Values{"per_page": {"50"}, "order_by": {"updated_at"}}
 	if state == "" {
 		state = "opened"
 	}
 	q.Set("state", state)
-	if author != "" {
+	switch author {
+	case "":
+	case "me":
+		q.Set("scope", "created_by_me")
+	case "review":
+		var u user
+		if err := g.DoURL(ctx, "GET", g.Host+"/api/v4/user", nil, &u); err != nil {
+			return nil, err
+		}
+		q.Set("reviewer_username", u.Username)
+	default:
 		q.Set("author_username", author)
+	}
+	if query != "" {
+		q.Set("search", query)
 	}
 	var raw []struct {
 		IID          int       `json:"iid"`
@@ -57,16 +72,133 @@ func (g GitLab) MRs(ctx context.Context, state, author string) ([]forge.MR, erro
 		TargetBranch string    `json:"target_branch"`
 		UpdatedAt    time.Time `json:"updated_at"`
 		WebURL       string    `json:"web_url"`
+		Draft        bool      `json:"draft"`
+		Conflicts    bool      `json:"has_conflicts"`
+		Detailed     string    `json:"detailed_merge_status"`
+		Notes        int       `json:"user_notes_count"`
 	}
 	if err := g.Get(ctx, "/merge_requests?"+q.Encode(), &raw); err != nil {
 		return nil, err
 	}
 	out := make([]forge.MR, 0, len(raw))
 	for _, m := range raw {
-		out = append(out, forge.MR{ID: strconv.Itoa(m.IID), Title: m.Title, Author: m.Author.Username, State: m.State,
+		merge := strings.ReplaceAll(m.Detailed, "_", " ")
+		switch {
+		case m.State == "merged" || m.State == "closed":
+			merge = ""
+		case m.Draft:
+			merge = "draft"
+		case m.Conflicts:
+			merge = "conflicts"
+		}
+		out = append(out, forge.MR{ID: strconv.Itoa(m.IID), Title: m.Title, Author: m.Author.Username, State: m.State, Merge: merge, Notes: m.Notes,
 			Source: m.SourceBranch, Target: m.TargetBranch, Updated: m.UpdatedAt, URL: m.WebURL})
 	}
 	return out, nil
+}
+
+func (g GitLab) MR(ctx context.Context, mr string) (string, error) {
+	var m struct {
+		IID         int       `json:"iid"`
+		Title       string    `json:"title"`
+		Description string    `json:"description"`
+		State       string    `json:"state"`
+		Author      user      `json:"author"`
+		Source      string    `json:"source_branch"`
+		Target      string    `json:"target_branch"`
+		WebURL      string    `json:"web_url"`
+		Detailed    string    `json:"detailed_merge_status"`
+		Created     time.Time `json:"created_at"`
+		Reviewers   []user    `json:"reviewers"`
+		Labels      []string  `json:"labels"`
+		Pipeline    *struct {
+			Status string `json:"status"`
+			WebURL string `json:"web_url"`
+		} `json:"head_pipeline"`
+	}
+	if err := g.Get(ctx, "/merge_requests/"+iid(mr), &m); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# !%d %s\n\n**%s** · %s → %s · %s · %s\n\n", m.IID, m.Title, m.State, m.Source, m.Target, m.Author.Username, m.Created.Format("2006-01-02"))
+	fmt.Fprintf(&b, "merge: %s", strings.ReplaceAll(m.Detailed, "_", " "))
+	if m.Pipeline != nil {
+		fmt.Fprintf(&b, " · pipeline: %s", m.Pipeline.Status)
+	}
+	if len(m.Reviewers) > 0 {
+		var rs []string
+		for _, r := range m.Reviewers {
+			rs = append(rs, r.Username)
+		}
+		fmt.Fprintf(&b, " · reviewers: %s", strings.Join(rs, ", "))
+	}
+	if len(m.Labels) > 0 {
+		fmt.Fprintf(&b, " · labels: %s", strings.Join(m.Labels, ", "))
+	}
+	fmt.Fprintf(&b, "\n\n%s\n\n%s\n", strings.TrimSpace(m.Description), m.WebURL)
+	var ap struct {
+		ApprovedBy []struct{ User user } `json:"approved_by"`
+		Left       int                   `json:"approvals_left"`
+	}
+	if g.Get(ctx, "/merge_requests/"+iid(mr)+"/approvals", &ap) == nil {
+		var who []string
+		for _, a := range ap.ApprovedBy {
+			who = append(who, a.User.Username)
+		}
+		fmt.Fprintf(&b, "\n## Approvals\n\n%s, %d more needed\n", cmp.Or(strings.Join(who, ", "), "none yet"), ap.Left)
+	}
+	var ds []struct {
+		Notes []struct {
+			Author     user      `json:"author"`
+			Body       string    `json:"body"`
+			Created    time.Time `json:"created_at"`
+			System     bool      `json:"system"`
+			Resolvable bool      `json:"resolvable"`
+			Resolved   bool      `json:"resolved"`
+			Position   *struct {
+				NewPath string `json:"new_path"`
+				NewLine int    `json:"new_line"`
+			} `json:"position"`
+		} `json:"notes"`
+	}
+	if g.Get(ctx, "/merge_requests/"+iid(mr)+"/discussions?per_page=100", &ds) == nil {
+		var open, other strings.Builder
+		for _, d := range ds {
+			if len(d.Notes) == 0 || d.Notes[0].System {
+				continue
+			}
+			n := d.Notes[0]
+			dst := &other
+			if n.Resolvable && !n.Resolved {
+				dst = &open
+			}
+			where := ""
+			if n.Position != nil {
+				where = fmt.Sprintf(" `%s:%d`", n.Position.NewPath, n.Position.NewLine)
+			}
+			fmt.Fprintf(dst, "\n**%s**%s %s\n\n%s\n", n.Author.Username, where, n.Created.Format("01-02 15:04"), strings.TrimSpace(n.Body))
+			for _, r := range d.Notes[1:] {
+				fmt.Fprintf(dst, "\n> **%s** %s\n", r.Author.Username, strings.ReplaceAll(strings.TrimSpace(r.Body), "\n", "\n> "))
+			}
+		}
+		if open.Len() > 0 {
+			b.WriteString("\n## Open threads\n" + open.String())
+		}
+		if other.Len() > 0 {
+			b.WriteString("\n## Comments\n" + other.String())
+		}
+	}
+	if files, err := g.Files(ctx, mr); err == nil && len(files) > 0 {
+		fmt.Fprintf(&b, "\n## Files (%d)\n\n", len(files))
+		for _, f := range files {
+			fmt.Fprintf(&b, "- %s `%s` (%d lines)\n", f.Status, f.Path, f.Changed)
+		}
+	}
+	return b.String(), nil
+}
+
+func (g GitLab) Rebase(ctx context.Context, mr string) error {
+	return g.Send(ctx, "PUT", "/merge_requests/"+iid(mr)+"/rebase", nil, nil)
 }
 
 func (g GitLab) Files(ctx context.Context, mr string) ([]forge.File, error) {
@@ -202,8 +334,9 @@ func (g GitLab) Retry(ctx context.Context, job string) error {
 }
 
 func (g GitLab) Releases(ctx context.Context, query string) ([]forge.Release, error) {
-	if query != "" {
-		return g.tags(ctx, query)
+	tags, err := g.tags(ctx, query)
+	if err != nil || query != "" {
+		return tags, err
 	}
 	var raw []struct {
 		TagName    string    `json:"tag_name"`
@@ -214,21 +347,24 @@ func (g GitLab) Releases(ctx context.Context, query string) ([]forge.Release, er
 		} `json:"_links"`
 	}
 	if err := g.Get(ctx, "/releases?per_page=50&order_by=released_at&sort=desc", &raw); err != nil {
-		return nil, err
+		return tags, nil
 	}
-	if len(raw) == 0 {
-		return g.tags(ctx, "")
+	have := map[string]bool{}
+	for _, t := range tags {
+		have[t.Tag] = true
 	}
-	out := make([]forge.Release, 0, len(raw))
 	for _, r := range raw {
-		out = append(out, forge.Release{Tag: r.TagName, Name: r.Name, Released: r.ReleasedAt, URL: r.Links.Self})
+		if !have[r.TagName] {
+			tags = append(tags, forge.Release{Tag: r.TagName, Name: r.Name, Released: r.ReleasedAt, URL: r.Links.Self})
+		}
 	}
-	return out, nil
+	sort.SliceStable(tags, func(i, j int) bool { return tags[i].Released.After(tags[j].Released) })
+	return tags, nil
 }
 
 // tags searches every tag by name (a project's releases are its tags, and the releases API cannot search).
 func (g GitLab) tags(ctx context.Context, query string) ([]forge.Release, error) {
-	q := url.Values{"per_page": {"50"}, "order_by": {"updated"}, "sort": {"desc"}}
+	q := url.Values{"per_page": {"100"}, "order_by": {"updated"}, "sort": {"desc"}}
 	if query != "" {
 		q.Set("search", query)
 	}
