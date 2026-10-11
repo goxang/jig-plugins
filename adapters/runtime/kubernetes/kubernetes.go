@@ -866,7 +866,16 @@ func (r *Runtime) Close() error {
 // ---- state ----
 
 func (r *Runtime) LoadState(ctx context.Context) (map[string]string, error) {
-	out, err := r.kubectl("get", "configmap", r.Opt.StateConfigMap, "--ignore-not-found", "-o", "json").Output(ctx)
+	m, err := r.loadState(ctx, r.Opt.StateConfigMap)
+	if err == nil && len(m) == 0 && r.Opt.StateConfigMap == "jig-state" {
+		// a namespace rig managed: its state is read here and saved as jig-state on the next change
+		return r.loadState(ctx, "rig-state")
+	}
+	return m, err
+}
+
+func (r *Runtime) loadState(ctx context.Context, name string) (map[string]string, error) {
+	out, err := r.kubectl("get", "configmap", name, "--ignore-not-found", "-o", "json").Output(ctx)
 	if err != nil {
 		return nil, err
 	}
