@@ -3,11 +3,13 @@
 package confluence
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"html"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,11 +21,13 @@ import (
 
 type Confluence struct {
 	*forge.Client
-	space string
+	space  string
+	spaces []string
 }
 
 // Open reads plugins.confluence: url (https://org.atlassian.net/wiki), user (Cloud: the account
-// email), token (CONFLUENCE_TOKEN or ATLASSIAN_TOKEN) and space (the default space key).
+// email), token (CONFLUENCE_TOKEN or ATLASSIAN_TOKEN) and space (space keys, a list or comma-separated;
+// the first is where new pages go).
 func Open(c *sdk.Ctx) (*Confluence, error) {
 	base := strings.TrimSuffix(forge.Config(c, "url"), "/")
 	if base == "" {
@@ -36,7 +40,24 @@ func Open(c *sdk.Ctx) (*Confluence, error) {
 	} else {
 		ep.Token = tok
 	}
-	return &Confluence{Client: &forge.Client{Base: base, Endpoint: ep}, space: forge.Config(c, "space")}, nil
+	spaces := spaceKeys(forge.Config(c, "space"))
+	cf := &Confluence{Client: &forge.Client{Base: base, Endpoint: ep}, spaces: spaces}
+	if len(spaces) > 0 {
+		cf.space = spaces[0]
+	}
+	return cf, nil
+}
+
+// spaceKeys reads "PROD, SWIT" and a YAML list (which arrives as "[PROD SWIT]").
+func spaceKeys(s string) []string {
+	return strings.FieldsFunc(strings.Trim(s, "[]"), func(r rune) bool { return r == ',' || r == ' ' })
+}
+
+func (cf *Confluence) spaceCQL() string {
+	if len(cf.spaces) == 0 {
+		return ""
+	}
+	return " AND space in (" + strings.Join(cf.spaces, ",") + ")"
 }
 
 type content struct {
@@ -47,8 +68,11 @@ type content struct {
 		Number int       `json:"number"`
 		When   time.Time `json:"when"`
 	} `json:"version"`
-	Ancestors []struct{ Title string } `json:"ancestors"`
-	Body      struct {
+	Ancestors []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"ancestors"`
+	Body struct {
 		Storage struct{ Value string } `json:"storage"`
 	} `json:"body"`
 	Links struct {
@@ -217,9 +241,7 @@ func Register(p *sdk.Plugin) {
 			if in.Query != "" {
 				cql += fmt.Sprintf(" AND text ~ %q", in.Query)
 			}
-			if cf.space != "" {
-				cql += " AND space = " + cf.space
-			}
+			cql += cf.spaceCQL()
 			cql += " ORDER BY lastmodified DESC"
 		}
 		rows, err := cf.list(c, "/rest/api/content/search?limit=50&expand=space,version,ancestors&cql="+url.QueryEscape(cql))
@@ -286,6 +308,39 @@ func Register(p *sdk.Plugin) {
 		return &sdk.Result{Message: "saved " + out.Title, Outputs: sdk.Args{"id": out.ID, "url": cf.Base + out.Links.WebUI}}, nil
 	})
 
+	p.Source("docs.pages", func(c *sdk.Ctx, _ struct{}) (*sdk.Frame, error) {
+		cf, err := Open(c)
+		if err != nil {
+			return nil, err
+		}
+		if len(cf.spaces) == 0 {
+			return nil, sdk.Unavailable("confluence has no space", "set plugins.confluence.space (one key or a list)")
+		}
+		var rows []treeRow
+		for _, key := range cf.spaces {
+			var sp struct{ Name string }
+			_ = cf.Get(c, "/rest/api/space/"+url.PathEscape(key), &sp)
+			var all []content
+			for start := 0; ; start += 100 {
+				var res struct {
+					Results []content
+					Size    int
+				}
+				path := fmt.Sprintf("/rest/api/space/%s/content/page?limit=100&start=%d&expand=space,version,ancestors", url.PathEscape(key), start)
+				if err := cf.Get(c, path, &res); err != nil {
+					return nil, err
+				}
+				all = append(all, res.Results...)
+				if res.Size < 100 {
+					break
+				}
+			}
+			rows = append(rows, treeRow{Title: cmp.Or(sp.Name, key) + " (" + key + ")", URL: cf.Base + "/display/" + key})
+			rows = append(rows, cf.tree(all)...)
+		}
+		return frames.Of(rows), nil
+	}, sdk.Cache("5m"))
+
 	p.Source("docs.tree", func(c *sdk.Ctx, in struct {
 		Parent string `json:"parent" desc:"a page id (default the space's top pages)"`
 	}) (*sdk.Frame, error) {
@@ -303,4 +358,44 @@ func Register(p *sdk.Plugin) {
 		rows, err := cf.list(c, path)
 		return frames.Of(rows), err
 	}, sdk.Cache("60s"))
+}
+
+type treeRow struct {
+	Title   string    `json:"title"`
+	Updated time.Time `json:"updated"`
+	URL     string    `json:"url"`
+}
+
+// tree lays a space's pages out in tree order under their parents (the last ancestor), each title
+// drawn with its branch: ├─ and └─ under │ rails.
+func (cf *Confluence) tree(pages []content) []treeRow {
+	kids := map[string][]content{}
+	ids := map[string]bool{}
+	for _, p := range pages {
+		ids[p.ID] = true
+	}
+	for _, p := range pages {
+		parent := ""
+		if n := len(p.Ancestors); n > 0 && ids[p.Ancestors[n-1].ID] {
+			parent = p.Ancestors[n-1].ID
+		}
+		kids[parent] = append(kids[parent], p)
+	}
+	for _, k := range kids {
+		slices.SortFunc(k, func(a, b content) int { return strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)) })
+	}
+	var out []treeRow
+	var walk func(parent, rail string)
+	walk = func(parent, rail string) {
+		for i, p := range kids[parent] {
+			branch, next := "├─ ", "│  "
+			if i == len(kids[parent])-1 {
+				branch, next = "└─ ", "   "
+			}
+			out = append(out, treeRow{Title: rail + branch + p.Title, Updated: p.Version.When, URL: cf.Base + p.Links.WebUI})
+			walk(p.ID, rail+next)
+		}
+	}
+	walk("", "")
+	return out
 }
